@@ -22,5 +22,10 @@
   <file>icons/wall.svg</file>
   <file>icons/lift.svg</file>
   <file>icons/traffic_editor.svg</file>
+  <file>styles/light.qss</file>
+  <file>icons/lane.svg</file>
+  <file>icons/model.svg</file>
+  <file>icons/polygon.svg</file>
+  <file>icons/human_lane.svg</file>
 </qresource>
 </RCC>

@@ -31,12 +31,12 @@ public:
   virtual void tick(Building& building) = 0;
   virtual void reset(Building& building) = 0;
 
-  virtual void scene_update(
+  virtual void sceneUpdate(
     QGraphicsScene* scene,
     Building& building,
     const int level_idx) = 0;
 
-  virtual void scene_clear() = 0;
+  virtual void sceneClear() = 0;
 };
 
 #endif
