@@ -144,7 +144,7 @@ protected:
 
   void showEvent(QShowEvent* event) override;
 
-protected:
+private:
   // gui create process
   MapView* createMapView();
   
@@ -165,6 +165,8 @@ protected:
   void createHelpMenu();
   void createToolbar();
   QLabel* createCacheSizeLabel();
+
+  QToolButton* createToolButton(const ToolId id, const QString& icon_filename, const QString& tooltip);
 
 private:
   /////////////////
@@ -209,11 +211,6 @@ private:
   void helpAbout();
 
   bool isMouseEventInMap(QMouseEvent* e, QPointF& p_scene);
-
-  QToolButton* createToolButton(
-    const ToolId id,
-    const QString& icon_filename,
-    const QString& tooltip);
 
   void toolToggled(int id, bool checked);
 

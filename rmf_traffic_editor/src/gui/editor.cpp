@@ -426,67 +426,6 @@ QLabel* Editor::createCacheSizeLabel()
   return cache_size_label;
 }
 
-void Editor::loadModelNames()
-{
-  QSettings settings;
-  QString thumbnail_path(settings.value(preferences_keys::thumbnail_path).toString());
-
-  if (thumbnail_path.isEmpty())
-  {
-    std::string assets_dir;
-    std::string share_dir;
-
-    try
-    {
-      share_dir = ament_index_cpp::get_package_share_directory("rmf_traffic_editor_assets");
-
-      ament_index_cpp::get_resource("rmf_traffic_editor_assets", "assets", assets_dir);
-    }
-    catch (const ament_index_cpp::PackageNotFoundError& e)
-    {
-      qWarning("Could not load default thumbnail directory! "
-        "traffic_editor_assets package not found in workspace!");
-      return;
-    }
-
-    // Strip newlines from assets_dir
-    assets_dir.erase(std::remove(assets_dir.begin(), assets_dir.end(), '\n'),
-      assets_dir.end());
-
-    // Obtain thumbnail path from traffic_editor_assets ament package
-    thumbnail_path =
-      QDir::cleanPath(
-      QDir(QApplication::applicationDirPath()).filePath(
-        (share_dir + "/" + assets_dir + "/thumbnails").c_str()
-      )
-      );
-    settings.setValue(preferences_keys::thumbnail_path, thumbnail_path);
-  }
-
-  QString model_list_path = QDir(thumbnail_path).filePath("model_list.yaml");
-
-  YAML::Node y;
-  std::string filename(model_list_path.toStdString());
-  try
-  {
-    y = YAML::LoadFile(filename);
-  }
-  catch (const std::exception& e)
-  {
-    qWarning("couldn't parse %s: %s", filename.c_str(), e.what());
-    return;
-  }
-  qInfo("parsed %s successfully", filename.c_str());
-
-  const double model_meters_per_pixel = y["meters_per_pixel"].as<double>();
-  const YAML::Node ym = y["models"];
-  editor_models.reserve(y["models"].size());
-  for (YAML::const_iterator it = ym.begin(); it != ym.end(); ++it)
-    editor_models.emplace_back(
-      it->as<std::string>(),
-      model_meters_per_pixel);
-}
-
 QToolButton* Editor::createToolButton(const ToolId id, const QString& icon_filename, const QString& tooltip)
 {
   QToolButton* b = new QToolButton(toolbar);
@@ -510,6 +449,59 @@ QToolButton* Editor::createToolButton(const ToolId id, const QString& icon_filen
   tools[id] = toolbar->addWidget(b);
   tool_button_group->addButton(b, id);
   return b;
+}
+
+void Editor::loadModelNames()
+{
+  QSettings settings;
+  QString thumbnail_path(settings.value(preferences_keys::thumbnail_path).toString());
+
+  if (thumbnail_path.isEmpty())
+  {
+    std::string assets_dir;
+    std::string share_dir;
+
+    try
+    {
+      share_dir = ament_index_cpp::get_package_share_directory("rmf_traffic_editor_assets");
+
+      ament_index_cpp::get_resource("rmf_traffic_editor_assets", "assets", assets_dir);
+    }
+    catch (const ament_index_cpp::PackageNotFoundError& e)
+    {
+      qWarning("Could not load default thumbnail directory! " "traffic_editor_assets package not found in workspace!");
+      return;
+    }
+
+    // Strip newlines from assets_dir
+    assets_dir.erase(std::remove(assets_dir.begin(), assets_dir.end(), '\n'), assets_dir.end());
+
+    // Obtain thumbnail path from traffic_editor_assets ament package
+    thumbnail_path = QDir::cleanPath(QDir(QApplication::applicationDirPath()).filePath((share_dir + "/" + assets_dir + "/thumbnails").c_str()));
+    settings.setValue(preferences_keys::thumbnail_path, thumbnail_path);
+  }
+
+  QString model_list_path = QDir(thumbnail_path).filePath("model_list.yaml");
+
+  YAML::Node y;
+  std::string filename(model_list_path.toStdString());
+  try {
+    y = YAML::LoadFile(filename);
+  }
+  catch (const std::exception& e)
+  {
+    qWarning("couldn't parse %s: %s", filename.c_str(), e.what());
+    return;
+  }
+
+  qInfo("parsed %s successfully", filename.c_str());
+
+  const double model_meters_per_pixel = y["meters_per_pixel"].as<double>();
+  const YAML::Node ym = y["models"];
+  editor_models.reserve(y["models"].size());
+
+  for (YAML::const_iterator it = ym.begin(); it != ym.end(); ++it)
+    editor_models.emplace_back(it->as<std::string>(), model_meters_per_pixel);
 }
 
 Editor* Editor::getInstance()
@@ -680,26 +672,26 @@ void Editor::buildingNew()
     return;
 
   QFileInfo file_info(file_dialog.selectedFiles().first());
-  std::string fn = file_info.fileName().toStdString();
+  std::string file_info_str = file_info.fileName().toStdString();
 
   // Guess the building name as the "filename before the dot".
   // User can override this guess in the dialog that opens afterwards.
-  std::string guessed_building_name(fn.begin(), fn.begin() + fn.find('.'));
+  std::string guessed_building_name(file_info_str.begin(), file_info_str.begin() + file_info_str.find('.'));
 
   QDialog new_building_dialog;
   Ui::NewBuildingDialog new_building_dialog_ui;
   new_building_dialog_ui.setupUi(&new_building_dialog);
-  new_building_dialog_ui.name_line_edit->setText(
-    QString::fromStdString(guessed_building_name));
+  new_building_dialog_ui.name_line_edit->setText(QString::fromStdString(guessed_building_name));
 
   if (new_building_dialog.exec() != QDialog::Accepted)
     return;
 
   building.clear();
+
   if (new_building_dialog_ui.geolocated_radio->isChecked())
-    building.coordinate_system.value = CoordinateSystem::Value::WGS84;
+    building.coordinate_system = CoordinateSystem(CoordinateSystem::Type::WGS84);
   else
-    building.coordinate_system.value = CoordinateSystem::Value::ReferenceImage;
+    building.coordinate_system = CoordinateSystem(CoordinateSystem::Type::ReferenceImage);
 
   if (!building.setFilename(file_info.absoluteFilePath().toStdString()))
     return;
@@ -1696,11 +1688,11 @@ void Editor::populatePropertyEditor(const Vertex& vertex, const int index)
     propertyEditorSetRow(1, "x (m)", vertex.x);
     propertyEditorSetRow(2, "y (m)", vertex.y);
 
-    CoordinateSystem::WGS84Point wgs84_point =
-      building.coordinate_system.toWgs84({vertex.x, vertex.y});
+    Eigen::Vector2d vertex_pos(vertex.x, vertex.y);
+    Eigen::Vector2d wgs84_point = building.coordinate_system.convert(vertex_pos, CoordinateSystem::Type::WebMercator);
 
-    propertyEditorSetRow(3, "lon (deg)", wgs84_point.lon, 6, true);
-    propertyEditorSetRow(4, "lat (deg)", wgs84_point.lat, 6, true);
+    propertyEditorSetRow(3, "lon (deg)", wgs84_point.x(), 6, true);
+    propertyEditorSetRow(4, "lat (deg)", wgs84_point.y(), 6, true);
   }
   propertyEditorSetRow(
     5,
