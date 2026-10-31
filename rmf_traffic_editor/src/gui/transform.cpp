@@ -39,13 +39,10 @@ bool Transform::fromYaml(
   }
   else if (data["translation_lat"] && data["translation_lon"])
   {
-    CoordinateSystem::WGS84Point wgs84_point;
-    wgs84_point.lon = data["translation_lon"].as<double>();
-    wgs84_point.lat = data["translation_lat"].as<double>();
-    CoordinateSystem::ProjectedPoint p =
-      coordinate_system.toEpsg3857(wgs84_point);
-    _translation.setX(p.x);
-    _translation.setY(p.y);
+    Eigen::Vector2d wgs84_point(data["translation_lon"].as<double>(), data["translation_lat"].as<double>());
+    Eigen::Vector2d epsg_3857_point = CoordinateSystem(CoordinateSystem::Type::WebMercator).convert(wgs84_point, CoordinateSystem::Type::WGS84);
+    _translation.setX(epsg_3857_point.x());
+    _translation.setY(epsg_3857_point.y());
   }
 
   if (data["yaw"])
@@ -70,10 +67,10 @@ YAML::Node Transform::toYaml(const CoordinateSystem& coordinate_system) const
   }
   else
   {
-    const CoordinateSystem::WGS84Point p =
-      coordinate_system.toWgs84({_translation.x(), _translation.y()});
-    y["translation_lat"] = p.lat;
-    y["translation_lon"] = p.lon;
+    Eigen::Vector2d epsg_3857_point(_translation.x(), _translation.y());
+    Eigen::Vector2d wgs_84_point = coordinate_system.convert(epsg_3857_point, CoordinateSystem::Type::WebMercator);
+    y["translation_lat"] = wgs_84_point.y();
+    y["translation_lon"] = wgs_84_point.x();
   }
   return y;
 }

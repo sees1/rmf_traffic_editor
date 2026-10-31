@@ -71,14 +71,10 @@ void Vertex::fromYaml(
   }
   else
   {
-    CoordinateSystem::WGS84Point wgs84_point;
-    wgs84_point.lon = data[0].as<double>();
-    wgs84_point.lat = data[1].as<double>();
-
-    CoordinateSystem::ProjectedPoint p =
-      coordinate_system.toEpsg3857(wgs84_point);
-    x = p.x;
-    y = p.y;
+    Eigen::Vector2d wgs84_point(data[0].as<double>(), data[1].as<double>());
+    Eigen::Vector2d epsg_3857_point = CoordinateSystem(CoordinateSystem::Type::WebMercator).convert(wgs84_point, CoordinateSystem::Type::WGS84);
+    x = epsg_3857_point.x();
+    y = epsg_3857_point.y();
   }
 
   if (data.size() < 4)
@@ -114,9 +110,10 @@ YAML::Node Vertex::toYaml(const CoordinateSystem& coordinate_system) const
   else
   {
     // convert back to WGS84 and save with as many decimal places as possible
-    CoordinateSystem::WGS84Point p = coordinate_system.toWgs84({x, y});
-    vertex_node.push_back(p.lon);
-    vertex_node.push_back(p.lat);
+    Eigen::Vector2d epsg_3857_point(x, y);
+    Eigen::Vector2d wgs_84_point = coordinate_system.convert(epsg_3857_point, CoordinateSystem::Type::WebMercator);
+    vertex_node.push_back(wgs_84_point.x());
+    vertex_node.push_back(wgs_84_point.y());
   }
   vertex_node.push_back(0.0);  // placeholder for Z offsets in the future
   vertex_node.push_back(name);

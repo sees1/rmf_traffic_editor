@@ -21,56 +21,51 @@
 #include <string>
 #include <proj.h>
 
-class CoordinateSystem
+#include <Eigen/Dense>
+
+class CoordinateSystem final
 {
 public:
-  enum Value {Undefined, ReferenceImage, WebMercator, CartesianMeters, WGS84};
-
-  struct ProjectedPoint
-  {
-  public:
-    double x = 0.0;
-    double y = 0.0;
-  };
-
-  struct WGS84Point
-  {
-  public:
-    double lat = 0;
-    double lon = 0;
-  };
+  enum Type {Undefined = 0, ReferenceImage, WebMercator, CartesianMeters, WGS84};
 
 public:
   CoordinateSystem();
-
-  CoordinateSystem(const CoordinateSystem::Value& _value);
+  CoordinateSystem(const CoordinateSystem::Type value);
+  CoordinateSystem(const CoordinateSystem& other);
+  CoordinateSystem(CoordinateSystem&& other);
+  CoordinateSystem& operator=(const CoordinateSystem& other);
+  CoordinateSystem& operator=(CoordinateSystem&& other);
 
   ~CoordinateSystem();
 
-  std::string toString();
-
-  static CoordinateSystem::Value valueFromString(const std::string& s);
-
-  bool isYFlipped() const;
-
-  double defaultScale() const;
-
-  bool hasTiles() const;
-
-  bool isGlobal() const;
-
-  ProjectedPoint toEpsg3857(const WGS84Point& wgs84_point) const;
-
-  WGS84Point toWgs84(const ProjectedPoint& point) const;
-
   void initProj();
 
+  bool isYFlipped() const;
+  double defaultScale() const;
+  bool hasTiles() const;
+  bool isGlobal() const;
+
+  // Convert from point_system to this system; WGS84 uses (longitude, latitude).
+  Eigen::Vector2d convert(const Eigen::Vector2d& point, CoordinateSystem::Type point_system) const;
+
 public:
-  Value value;
+  // implicit-cast operator's
+  operator std::string() const;
+
+public:
+  static CoordinateSystem::Type typeFromString(const std::string& s);
+
   // equatorial radius of the earth in WGS84 (meters)
   static constexpr double wgs84_a = 6378137.0;
-  PJ_CONTEXT* proj_context = nullptr;
-  PJ* epsg_3857_to_wgs84 = nullptr;
+
+private:
+  void reset();
+
+private:
+  Type type;
+
+  PJ_CONTEXT* proj_context;
+  PJ* epsg_3857_to_wgs84;
 
   /*
   // even for maps defined in WGS84, we often want to generate a local

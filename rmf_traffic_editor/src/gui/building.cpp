@@ -48,7 +48,7 @@ using std::shared_ptr;
 
 Building::Building()
 : name("building"),
-  coordinate_system(CoordinateSystem::ReferenceImage)
+  coordinate_system(CoordinateSystem::Type::ReferenceImage)
 { }
 
 Building::~Building() { }
@@ -98,7 +98,7 @@ bool Building::load(const string& _filename)
     name = y["name"].as<string>();
 
   if (y["coordinate_system"])
-    coordinate_system.value = CoordinateSystem::valueFromString(y["coordinate_system"].as<string>());
+    coordinate_system = CoordinateSystem(CoordinateSystem::typeFromString(y["coordinate_system"].as<string>()));
 
   if (y["reference_level_name"])
     reference_level_name = y["reference_level_name"].as<string>();
@@ -188,7 +188,7 @@ bool Building::save()
   y["name"] = name;
   y["name"].SetTag("!");
 
-  y["coordinate_system"] = coordinate_system.toString();
+  y["coordinate_system"] = static_cast<std::string>(coordinate_system);
 
   if (!reference_level_name.empty())
   {

@@ -18,99 +18,85 @@
 #include "coordinate_system.h"
 
 CoordinateSystem::CoordinateSystem()
-: value(CoordinateSystem::Undefined)
+: CoordinateSystem(CoordinateSystem::Type::Undefined)
+{ }
+
+CoordinateSystem::CoordinateSystem(const CoordinateSystem::Type t)
+: type(t),
+  proj_context(nullptr),
+  epsg_3857_to_wgs84(nullptr)
 {
-  printf("CoordinateSystem::CoordinateSystem()\n");
-  throw;
+  printf("CoordinateSystem::CoordinateSystem(Type)\n");
   initProj();
 }
 
-CoordinateSystem::CoordinateSystem(const CoordinateSystem::Value& _value)
-: value(_value)
+CoordinateSystem::CoordinateSystem(const CoordinateSystem& other)
+: CoordinateSystem(other.type)
+{ }
+
+CoordinateSystem::CoordinateSystem(CoordinateSystem&& other)
+: CoordinateSystem(other)
+{ }
+
+CoordinateSystem& CoordinateSystem::operator=(const CoordinateSystem& other)
 {
-  printf("CoordinateSystem::CoordinateSystem(value)\n");
+  if (&other == this)
+    return *this;
+
+  type = other.type;
+  reset();
   initProj();
+
+  return *this;
 }
 
-void CoordinateSystem::initProj()
+CoordinateSystem& CoordinateSystem::operator=(CoordinateSystem&& other)
 {
-  printf("CoordinateSystem::init_proj()\n");
-  if (proj_context)
-  {
-    printf("CoordinateSystem::init_proj() called twice!\n");
-    return;
-  }
-  proj_context = proj_context_create();
-  epsg_3857_to_wgs84 = proj_create_crs_to_crs(
-    proj_context,
-    "EPSG:3857",
-    "EPSG:4326",
-    NULL);
+  return CoordinateSystem::operator=(other);
 }
 
 CoordinateSystem::~CoordinateSystem()
 {
   printf("CoordinateSystem::~CoordinateSystem()\n");
-  if (epsg_3857_to_wgs84)
-  {
-    proj_destroy(epsg_3857_to_wgs84);
-    epsg_3857_to_wgs84 = nullptr;
-  }
-  else
-  {
-    printf("no epsg_3857_to_wgs84 during CoordinateSystem destructor!\n");
-  }
+
+  reset();
+}
+
+void CoordinateSystem::initProj()
+{
+  printf("CoordinateSystem::init_proj()\n");
 
   if (proj_context)
   {
-    proj_context_destroy(proj_context);
-    proj_context = nullptr;
-  }
-  else
-  {
-    printf("no proj_context during CoordinateSystem destructor!\n");
+    printf("CoordinateSystem::init_proj() called twice!\n");
+    return;
   }
 
+  proj_context = proj_context_create();
+  epsg_3857_to_wgs84 = proj_create_crs_to_crs(proj_context, "EPSG:3857", "EPSG:4326", NULL);
 }
 
-std::string CoordinateSystem::toString()
+CoordinateSystem::operator std::string() const
 {
-  switch (value)
+  switch(type)
   {
     case ReferenceImage: return "reference_image";
     case WebMercator: return "web_mercator";
     case CartesianMeters: return "cartesian_meters";
     case WGS84: return "wgs84";
-
-    case Undefined:
-    default:
-      return "undefined";
+    case Undefined: return "undefined";
+    default: return "undefined";
   }
-}
-
-CoordinateSystem::Value CoordinateSystem::valueFromString(
-  const std::string& s)
-{
-  if (s == "reference_image")
-    return ReferenceImage;
-  else if (s == "web_mercator")
-    return WebMercator;
-  else if (s == "cartesian_meters")
-    return CartesianMeters;
-  else if (s == "wgs84")
-    return WGS84;
-  else
-    return Undefined;
 }
 
 bool CoordinateSystem::isYFlipped() const
 {
-  return value == ReferenceImage;
+  return type == CoordinateSystem::Type::ReferenceImage;
 }
 
 bool CoordinateSystem::isGlobal() const
 {
-  return value == WGS84;
+  return type == CoordinateSystem::Type::WGS84;
 }
 
 double CoordinateSystem::defaultScale() const
@@ -125,50 +111,59 @@ double CoordinateSystem::defaultScale() const
   // and the UI tools work as expected in, for example,
   // Cartesian-meters coordinate systems.
 
-  if (value == CoordinateSystem::ReferenceImage)
+  if (type == CoordinateSystem::Type::ReferenceImage)
     return 0.05;
-  else
-    return 1.0;
+    
+  return 1.0;
 }
 
 bool CoordinateSystem::hasTiles() const
 {
-  return value == CoordinateSystem::WGS84;
+  return type == CoordinateSystem::Type::WGS84;
 }
 
-CoordinateSystem::WGS84Point CoordinateSystem::toWgs84(
-  const ProjectedPoint& point) const
+CoordinateSystem::Type CoordinateSystem::typeFromString(const std::string& s)
 {
-  if (value != ReferenceImage)
-  {
-    // todo: if CartesianMeters, use the CRS name provided somewhere
-    const PJ_COORD c = proj_coord(point.x, point.y, 0, 0);
-    const PJ_COORD wgs84_coord = proj_trans(
-      epsg_3857_to_wgs84,
-      PJ_FWD,
-      c);
-    return WGS84Point{wgs84_coord.v[0], wgs84_coord.v[1]};
-  }
+  if (s == "reference_image")
+    return ReferenceImage;
+  else if (s == "web_mercator")
+    return WebMercator;
+  else if (s == "cartesian_meters")
+    return CartesianMeters;
+  else if (s == "wgs84")
+    return WGS84;
   else
-  {
-    return {0, 0};
-  }
+    return Undefined;
 }
 
-CoordinateSystem::ProjectedPoint CoordinateSystem::toEpsg3857(
-  const WGS84Point& point) const
+Eigen::Vector2d CoordinateSystem::convert(const Eigen::Vector2d& point, CoordinateSystem::Type point_system) const
 {
-  if (value == WGS84)
+  if (type == point_system)
+    return point;
+  else if (type == CoordinateSystem::Type::WGS84 && point_system == CoordinateSystem::Type::WebMercator)
   {
-    const PJ_COORD p_in = proj_coord(point.lat, point.lon, 0, 0);
-    const PJ_COORD p_out = proj_trans(
-      epsg_3857_to_wgs84,
-      PJ_INV,
-      p_in);
-    return ProjectedPoint({p_out.v[0], p_out.v[1]});
+    const PJ_COORD c = proj_coord(point.x(), point.y(), 0, 0);
+    const PJ_COORD wgs84_coord = proj_trans(epsg_3857_to_wgs84, PJ_FWD, c);
+    return {wgs84_coord.v[1], wgs84_coord.v[0]};
+  }
+  else if (type == CoordinateSystem::Type::WebMercator && point_system == CoordinateSystem::Type::WGS84)
+  {
+    const PJ_COORD p_in = proj_coord(point.y(), point.x(), 0, 0);
+    const PJ_COORD p_out = proj_trans(epsg_3857_to_wgs84, PJ_INV, p_in);
+    return {p_out.v[0], p_out.v[1]};
   }
   else
-  {
-    return {0, 0};
-  }
+    return {0.0, 0.0};
+}
+
+void CoordinateSystem::reset()
+{
+  if (epsg_3857_to_wgs84)
+    proj_destroy(epsg_3857_to_wgs84);
+
+  if (proj_context)
+    proj_context_destroy(proj_context);
+
+  epsg_3857_to_wgs84 = nullptr;
+  proj_context = nullptr;
 }

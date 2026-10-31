@@ -55,14 +55,12 @@ void Model::fromYaml(
   }
   else
   {
-    CoordinateSystem::WGS84Point wgs84_point;
-    wgs84_point.lon = data["x"].as<double>();
-    wgs84_point.lat = data["y"].as<double>();
+    Eigen::Vector2d wgs84_point(data["x"].as<double>(), data["y"].as<double>());
 
-    CoordinateSystem::ProjectedPoint p =
-      coordinate_system.toEpsg3857(wgs84_point);
-    state.x = p.x;
-    state.y = p.y;
+    Eigen::Vector2d epsg_3857_point = CoordinateSystem(CoordinateSystem::Type::WebMercator).convert(wgs84_point, CoordinateSystem::Type::WGS84);
+
+    state.x = epsg_3857_point.x();
+    state.y = epsg_3857_point.y();
   }
 
   if (data["z"])
@@ -116,10 +114,10 @@ YAML::Node Model::toYaml(const CoordinateSystem& coordinate_system) const
   else
   {
     // convert back to WGS84 and save with as many decimal places as possible
-    CoordinateSystem::WGS84Point p =
-      coordinate_system.toWgs84({state.x, state.y});
-    n["x"] = p.lon;
-    n["y"] = p.lat;
+    Eigen::Vector2d epsg_3857_point(state.x, state.y);
+    Eigen::Vector2d wgs_84_point = coordinate_system.convert(epsg_3857_point, CoordinateSystem::Type::WebMercator);
+    n["x"] = wgs_84_point.x();
+    n["y"] = wgs_84_point.y();
   }
   n["z"] = std::round(state.z * 1000.0) / 1000.0;
   // let's give yaw another decimal place because, I don't know, reasons (?)
