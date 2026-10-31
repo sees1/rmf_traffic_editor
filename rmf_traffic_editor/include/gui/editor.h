@@ -144,15 +144,38 @@ protected:
 
   void showEvent(QShowEvent* event) override;
 
+protected:
+  // gui create process
+  MapView* createMapView();
+  
+  LayerTable* createLayerTable();
+  LevelTable* createLevelTable();
+  LiftTable* createLiftTable();
+  TrafficTable* createTrafficTable();
+  CrowdSimEditorTable* createCrowdSimTable();
+
+  QTableWidget* createPropertyEditor();
+  QLabel* createPropertyLabel();
+  QHBoxLayout* createPropertyButtons();
+  QPushButton* createLineStyleButton(); // TODO: move to another place
+
+  void createBuildingMenu();
+  void createEditMenu();
+  void createViewMenu();
+  void createHelpMenu();
+  void createToolbar();
+  QLabel* createCacheSizeLabel();
+
 private:
   /////////////////
   // MENU ACTIONS
+
+  // building menu handler's
   void buildingNew();
-
   void buildingOpen();
-
   bool buildingSave();
-
+  bool buildingDoorVertexOffset();
+  void buildingExportNavJson();
   bool buildingExportFeatures();
 
   bool maybeSave();
@@ -176,12 +199,6 @@ private:
   void levelAdd();
 
   void levelEdit();
-
-  void levelTableUpdateSlot();
-
-  void layerTableUpdate(const int row_idx);
-
-  void layerTableUpdateSlot();
 
   void zoomReset();
 
@@ -210,15 +227,17 @@ private:
 
   void updateTables();
 
+  // LevelTable handler's
+  void levelChange(const int row_idx);
+  void levelCellClicked(const int row_idx);
+  void levelTableUpdateSlot();
+  
+  // LayerTable handler's
   void populateLayersTable();
-
-  void layersTableSetRow(
-    const int row_idx,
-    const QString& label,
-    const bool checked);
-
+  void layersTableSetRow(const int row_idx, const QString& label, const bool checked);
+  void layerTableUpdate(const int row_idx);
+  void layerTableUpdateSlot();
   void layerEditButtonClicked(const int row_idx);
-
   void layerAddButtonClicked();
 
   void updatePropertyEditor();
@@ -239,8 +258,7 @@ private:
 
   void populatePropertyEditor(const Layer& layer);
 
-  QTableWidgetItem* createTableItem(const QString& str,
-    bool editable = false);
+  QTableWidgetItem* createTableItem(const QString& str, bool editable = false);
 
   void propertyEditorCellChanged(int row, int column);
 
@@ -344,48 +362,61 @@ private:
 
   void mouseEditPolygon(const MouseType t, QMouseEvent* e, const QPointF& p);
 
-  void mouseAddHumanLane(const MouseType t, QMouseEvent* e,
-    const QPointF& p);
+  void mouseAddHumanLane(const MouseType t, QMouseEvent* e, const QPointF& p);
 
-  void mouseAddConstraint(
-    const MouseType t,
-    QMouseEvent* e,
-    const QPointF& p);
+  void mouseAddConstraint(const MouseType t, QMouseEvent* e, const QPointF& p);
 
   void sanityCheck();
 
   void cacheSizeUpdateTimerTimeout();
 
 private:
+  static Editor* instance;  // there will only be one instance
+
+  const static int rotation_indicator_radius = 50;
+  
+  // draw tool's
+  RenderingOptions rendering_options;
+  QGraphicsScene* scene;
+  MapView* map_view;
+  
+  Building building;
+
+  // Table's
+  LevelTable* level_table;
+  LayerTable* layer_table;
+  LiftTable* lift_table;
+  TrafficTable* traffic_table;
+  CrowdSimEditorTable* crowd_sim_table;
+
+  // For undo related support
   QUndoStack undo_stack;
-  ToolId tool_id = TOOL_SELECT;
+  ToolId tool_id;
   std::map<ToolId, QAction*> tools;
+  AddEdgeCommand* latest_add_edge;
+  MoveFeatureCommand* latest_move_feature;
+  MoveFiducialCommand* latest_move_fiducial;
+  MoveModelCommand* latest_move_model;
+  MoveLiftCommand* latest_move_lift;
+  MoveVertexCommand* latest_move_vertex;
+  RotateModelCommand* latest_rotate_model;
+
+  int level_idx;  // level that we are currently editing
+  int layer_idx;  // currently selected layer
+  int clicked_idx;  // point most recently clicked
+  int prev_clicked_idx; // Previously clicked ID.
+  //int polygon_idx = -1;  // currently selected polygon
   QToolBar* toolbar;
   QComboBox* mode_combo_box;
-  /////////////////////////////
-  static Editor* instance;  // there will only be one instance
-  Building building;
-  RenderingOptions rendering_options;
-  int level_idx = 0;  // level that we are currently editing
-  int layer_idx = 0;  // currently selected layer
-  int clicked_idx = -1;  // point most recently clicked
-  int prev_clicked_idx = -1; // Previously clicked ID.
-  //int polygon_idx = -1;  // currently selected polygon
-  Polygon* selected_polygon = nullptr;
+  Polygon* selected_polygon;
   QUuid clicked_feature_id;
-  QGraphicsScene* scene = nullptr;
-  MapView* map_view = nullptr;
-  QAction* view_models_action = nullptr;
-  QAction* view_tiles_action = nullptr;
-  QButtonGroup* tool_button_group = nullptr;
-  QTabWidget* right_tab_widget = nullptr;
-  LevelTable* level_table = nullptr;
-  LayerTable* layer_table = nullptr;
-  LiftTable* lift_table = nullptr;
-  TrafficTable* traffic_table = nullptr;
-  CrowdSimEditorTable* crowd_sim_table = nullptr;
-  QTableWidget* property_editor = nullptr;
-  QPushButton* add_param_button, * delete_param_button;
+  QAction* view_models_action;
+  QAction* view_tiles_action;
+  QButtonGroup* tool_button_group;
+  QTabWidget* right_tab_widget;
+  QTableWidget* property_editor;
+  QPushButton* add_param_button;
+  QPushButton* delete_param_button;
   QPushButton* line_style_button;
 #ifdef HAS_IGNITION_PLUGIN
   QAction* sim_reset_action;
@@ -399,33 +430,26 @@ private:
   cv::VideoWriter* video_writer = nullptr;
 #endif
   std::vector<EditorModel> editor_models;
-  EditorModel* mouse_motion_editor_model = nullptr;
-  const static int rotation_indicator_radius = 50;
-  QGraphicsLineItem* mouse_motion_line = nullptr;
-  QGraphicsEllipseItem* mouse_motion_ellipse = nullptr;
-  QGraphicsPixmapItem* mouse_motion_model = nullptr;
-  QGraphicsPolygonItem* mouse_motion_polygon = nullptr;
-  int mouse_model_idx = -1;
-  int mouse_vertex_idx = -1;
-  int mouse_feature_idx = -1;
-  int mouse_feature_layer_idx = -1;
-  int mouse_fiducial_idx = -1;
+  EditorModel* mouse_motion_editor_model;
+  QGraphicsLineItem* mouse_motion_line;
+  QGraphicsEllipseItem* mouse_motion_ellipse;
+  QGraphicsPixmapItem* mouse_motion_model;
+  QGraphicsPolygonItem* mouse_motion_polygon;
+  int mouse_model_idx;
+  int mouse_vertex_idx;
+  int mouse_feature_idx;
+  int mouse_feature_layer_idx;
+  int mouse_fiducial_idx;
   std::vector<int> mouse_motion_polygon_vertices;
   //int mouse_motion_polygon_vertex_idx = -1;
   Polygon::EdgeDragPolygon mouse_edge_drag_polygon;
   QPointF previous_mouse_point;
-  // For undo related support
-  AddEdgeCommand* latest_add_edge = nullptr;
-  MoveFeatureCommand* latest_move_feature = nullptr;
-  MoveFiducialCommand* latest_move_fiducial = nullptr;
-  MoveModelCommand* latest_move_model = nullptr;
-  MoveLiftCommand* latest_move_lift = nullptr;
-  Eigen::Affine2d lift_scene_to_reference = Eigen::Affine2d::Identity();
-  Eigen::Vector2d lift_drag_offset = Eigen::Vector2d::Zero();
-  MoveVertexCommand* latest_move_vertex = nullptr;
-  RotateModelCommand* latest_rotate_model = nullptr;
-  QLabel* cache_size_label = nullptr;
-  QTimer* cache_size_update_timer = nullptr;
+
+  Eigen::Affine2d lift_scene_to_reference;
+  Eigen::Vector2d lift_drag_offset;
+
+  QLabel* cache_size_label;
+  QTimer* cache_size_update_timer;
 };
 
 #endif

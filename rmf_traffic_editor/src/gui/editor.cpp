@@ -70,17 +70,118 @@
 using std::string;
 using std::isnan;
 
-
 Editor* Editor::instance = nullptr;
 
 Editor::Editor()
-: QMainWindow()
+: QMainWindow(),
+  tool_id(ToolId::TOOL_SELECT),
+  level_idx(0),
+  layer_idx(0),
+  clicked_idx(-1),
+  prev_clicked_idx(-1),
+  selected_polygon(nullptr),
+  scene(nullptr),
+  map_view(nullptr),
+  view_models_action(nullptr),
+  view_tiles_action(nullptr),
+  tool_button_group(nullptr),
+  right_tab_widget(nullptr),
+  level_table(nullptr),
+  layer_table(nullptr),
+  lift_table(nullptr),
+  traffic_table(nullptr),
+  crowd_sim_table(nullptr),
+  property_editor(nullptr),
+  mouse_motion_editor_model(nullptr),
+  mouse_motion_line(nullptr),
+  mouse_motion_ellipse(nullptr),
+  mouse_motion_model(nullptr),
+  mouse_motion_polygon(nullptr),
+  mouse_model_idx(-1),
+  mouse_vertex_idx(-1),
+  mouse_feature_idx(-1),
+  mouse_feature_layer_idx(-1),
+  mouse_fiducial_idx(-1),
+  latest_add_edge(nullptr),
+  latest_move_feature(nullptr),
+  latest_move_fiducial(nullptr),
+  latest_move_model(nullptr),
+  latest_move_lift(nullptr),
+  lift_scene_to_reference(Eigen::Affine2d::Identity()),
+  lift_drag_offset(Eigen::Vector2d::Zero()),
+  latest_move_vertex(nullptr),
+  latest_rotate_model(nullptr),
+  cache_size_label(nullptr),
+  cache_size_update_timer(nullptr)
 {
   instance = this;
 
   setWindowIcon(QIcon(":icons/traffic_editor.svg"));
   setWindowTitle("Traffic Editor[*]");
 
+  right_tab_widget = new QTabWidget;
+  right_tab_widget->setDocumentMode(true);
+  right_tab_widget->setUsesScrollButtons(true);
+  right_tab_widget->addTab(createLevelTable(), "Levels");
+  right_tab_widget->addTab(createLayerTable(), "Layers");
+  right_tab_widget->addTab(createLiftTable(), "Lifts");
+  right_tab_widget->addTab(createTrafficTable(), "Graphs");
+  right_tab_widget->addTab(createCrowdSimTable(), "Crowds");
+
+  QVBoxLayout* right_column_layout = new QVBoxLayout;
+  right_column_layout->addWidget(right_tab_widget);
+  right_column_layout->addWidget(createPropertyLabel());
+  right_column_layout->addWidget(createLineStyleButton());
+  right_column_layout->addWidget(createPropertyEditor());
+  right_column_layout->addLayout(createPropertyButtons());
+  right_column_layout->setContentsMargins(12, 12, 12, 12);
+  right_column_layout->setSpacing(10);
+
+  QWidget* inspector = new QWidget;
+  inspector->setObjectName("inspector");
+  inspector->setLayout(right_column_layout);
+  inspector->setMinimumWidth(360);
+
+  QSplitter* workspace = new QSplitter(Qt::Horizontal, this);
+  // MapView ignores tool mouse events so they reach the editor. Every
+  // intermediate widget must track hover motion for live tool previews.
+  workspace->setMouseTracking(true);
+  workspace->setChildrenCollapsible(false);
+  workspace->addWidget(createMapView());
+  workspace->addWidget(inspector);
+  workspace->setStretchFactor(0, 1);
+  workspace->setStretchFactor(1, 0);
+  workspace->setSizes({1000, 420});
+  setMouseTracking(true);
+  setCentralWidget(workspace);
+
+  createBuildingMenu();
+  createEditMenu();
+  createViewMenu();
+  createHelpMenu();
+  createToolbar();
+
+  // STATUS BAR
+  QLabel* label = createCacheSizeLabel();
+
+  statusBar()->addPermanentWidget(label);
+  
+  map_view->updateCacheSizeLabel(label);
+
+  loadModelNames();
+
+  cache_size_update_timer = new QTimer;
+  connect(cache_size_update_timer, &QTimer::timeout, this, &Editor::cacheSizeUpdateTimerTimeout);
+  cache_size_update_timer->start(10 * 1000);
+}
+
+Editor::~Editor()
+{
+  delete latest_move_lift;
+}
+
+MapView* Editor::createMapView()
+{
   QSettings settings;
   qDebug("settings filename: [%s]", qUtf8Printable(settings.fileName()));
 
@@ -90,474 +191,246 @@ Editor::Editor()
   map_view->setScene(scene);
   map_view->setFrameShape(QFrame::NoFrame);
 
+  const int width = settings.contains(preferences_keys::window_width) ? settings.value(preferences_keys::window_width).toInt()
+                                                                      : QGuiApplication::primaryScreen()->availableSize().width();
+  const int height = settings.contains(preferences_keys::window_height) ? settings.value(preferences_keys::window_height).toInt()
+                                                                        : QGuiApplication::primaryScreen()->availableSize().height();
+  const int left = settings.contains(preferences_keys::window_left) ? settings.value(preferences_keys::window_left).toInt()
+                                                                    : 0;
+  const int top = settings.contains(preferences_keys::window_top) ? settings.value(preferences_keys::window_top).toInt()
+                                                                  : 0;
 
-  layer_table = new LayerTable;
-  connect(
-    layer_table, &QTableWidget::cellClicked,
-    [&](int row, int /*col*/)
-    {
-      if (row - 1 < static_cast<int>(building.levels[level_idx].layers.size()))
-      {
-        layer_idx = row;
-        layer_table->update(building, level_idx, layer_idx);
-        if (layer_idx > 0)
-          populatePropertyEditor(building.levels[level_idx].layers[layer_idx-1]);
-      }
-    });
+  setGeometry(left, top, width, height);
+  map_view->adjustSize();
 
-  connect(
-    layer_table,
-    &LayerTable::redrawScene,
-    this,
-    &Editor::layerTableUpdateSlot);
+  return map_view;
+}
 
-  connect(
-    layer_table,
-    &LayerTable::addButtonClicked,
-    this,
-    &Editor::layerAddButtonClicked);
+LayerTable* Editor::createLayerTable()
+{
+  layer_table = new LayerTable();
+  connect(layer_table, &LayerTable::cellClicked, this, &Editor::layerEditButtonClicked);
+  connect(layer_table, &LayerTable::redrawScene, this, &Editor::layerTableUpdateSlot);
+  connect(layer_table, &LayerTable::addButtonClicked, this, &Editor::layerAddButtonClicked);
+  connect(layer_table, &LayerTable::editButtonClicked, this, &Editor::layerEditButtonClicked);
 
-  connect(
-    layer_table,
-    &LayerTable::editButtonClicked,
-    this,
-    &Editor::layerEditButtonClicked);
+  return layer_table;
+}
 
-  level_table = new LevelTable;
-  connect(
-    level_table, &QTableWidget::cellClicked,
-    [&](int row, int /*col*/)
-    {
-      if (row < static_cast<int>(building.levels.size()))
-      {
-        if (latest_move_lift)
-          clearCurrentToolBuffer();
-        // save the center point of the current level's image coordinates
-        const QPoint p_center_window(
-          map_view->viewport()->width() / 2,
-          map_view->viewport()->height() / 2);
-        QPointF p_center_scene = map_view->mapToScene(p_center_window);
+LevelTable* Editor::createLevelTable()
+{
+  level_table = new LevelTable();
+  connect(level_table, &QTableWidget::cellClicked, this, &Editor::levelCellClicked);
+  connect(level_table, &LevelTable::redrawScene, this, &Editor::levelTableUpdateSlot);
+  connect(level_table, &LevelTable::levelChanged, this, &Editor::levelChange);
 
-        QPointF p_transformed;
-        building.transformBetweenLevels(
-          level_idx,
-          p_center_scene,
-          row,
-          p_transformed);
+  level_table->setCurrentCell(level_idx, 0);
 
-        // maintain the view scale
-        double scale = map_view->transform().m11() *
-        building.levels[row].drawing_meters_per_pixel /
-        building.levels[level_idx].drawing_meters_per_pixel;
+  return level_table;
+}
 
-        if (isnan(scale))
-        {
-          scale = 1.0;
-          p_transformed = QPointF(0.0, 0.0);
-        }
+LiftTable* Editor::createLiftTable()
+{
+  lift_table = new LiftTable();
+  connect(lift_table, &TableList::redraw, [this]() { this->createScene(); });
 
-        level_idx = row;
-        createScene();
+  return lift_table;
+}
 
-        QTransform t;
-        double y_flip = building.coordinate_system.isYFlipped() ? 1 : -1;
-        t.scale(scale, y_flip * scale);
-        map_view->setTransform(t);
-        map_view->centerOn(p_transformed);
-      }
-    });
+TrafficTable* Editor::createTrafficTable()
+{
+  traffic_table = new TrafficTable();
+  connect(traffic_table, &TableList::redraw, [this]() { this->createScene(); });
+  connect(traffic_table, &QTableWidget::cellClicked,
+  [&](int row, int /*col*/)
+  {
+    rendering_options.active_traffic_map_idx = row;
+    traffic_table->update(rendering_options);
+  });
 
-  connect(
-    level_table,
-    &LevelTable::redrawScene,
-    this,
-    &Editor::levelTableUpdateSlot);
+  return traffic_table;
+}
 
-  connect(
-    level_table,
-    &LevelTable::levelChanged,
-    this,
-    [this](int row)
-    {
-      if (latest_move_lift)
-        clearCurrentToolBuffer();
-      level_idx = row;
-      layer_idx = 0;
-      updateTables();
-      level_table->setCurrentCell(row, 0);
-      createScene();
-      zoomReset();
-      setWindowModified(true);
-    });
-
-  lift_table = new LiftTable;
-  connect(
-    lift_table,
-    &TableList::redraw,
-    [this]() { this->createScene(); });
-
-  traffic_table = new TrafficTable;
-  connect(
-    traffic_table,
-    &TableList::redraw,
-    [this]() { this->createScene(); });
-
-  connect(
-    traffic_table,
-    &QTableWidget::cellClicked,
-    [&](int row, int /*col*/)
-    {
-      rendering_options.active_traffic_map_idx = row;
-      traffic_table->update(rendering_options);
-    });
-
+CrowdSimEditorTable* Editor::createCrowdSimTable()
+{
   crowd_sim_table = new CrowdSimEditorTable(building);
-  connect(
-    crowd_sim_table,
-    &QTableWidget::cellClicked,
-    [&]()
-    {
-      crowd_sim_table->update();
-      createScene();
-    }
-  );
+  connect(crowd_sim_table, &QTableWidget::cellClicked,
+  [&]()
+  {
+    crowd_sim_table->update();
+    createScene();
+  });
 
-  right_tab_widget = new QTabWidget;
-  right_tab_widget->setDocumentMode(true);
-  right_tab_widget->setUsesScrollButtons(true);
-  right_tab_widget->addTab(level_table, "Levels");
-  right_tab_widget->addTab(layer_table, "Layers");
-  right_tab_widget->addTab(lift_table, "Lifts");
-  right_tab_widget->addTab(traffic_table, "Graphs");
-  right_tab_widget->addTab(crowd_sim_table, "Crowds");
+  return crowd_sim_table;
+}
 
+QTableWidget* Editor::createPropertyEditor()
+{
   property_editor = new QTableWidget;
   property_editor->viewport()->installEventFilter(this);
   property_editor->setAlternatingRowColors(true);
   property_editor->setShowGrid(false);
   property_editor->setMinimumSize(320, 180);
-  property_editor->setSizePolicy(
-    QSizePolicy::Expanding,
-    QSizePolicy::MinimumExpanding);
+  property_editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
   property_editor->setColumnCount(2);
   property_editor->horizontalHeader()->setVisible(false);
   property_editor->verticalHeader()->setVisible(false);
-  property_editor->horizontalHeader()->setSectionResizeMode(
-    0,
-    QHeaderView::ResizeToContents);
-  property_editor->horizontalHeader()->setSectionResizeMode(
-    1,
-    QHeaderView::Stretch);
-  property_editor->verticalHeader()->setSectionResizeMode(
-    QHeaderView::ResizeToContents);
+  property_editor->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  property_editor->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  property_editor->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
   property_editor->setAutoFillBackground(true);
   property_editor->setSelectionBehavior(QAbstractItemView::SelectRows);
-  connect(
-    property_editor, &QTableWidget::cellChanged,
-    this, &Editor::propertyEditorCellChanged);
-  connect(
-    property_editor, &QTableWidget::itemSelectionChanged,
-    [this]()
+  connect(property_editor, &QTableWidget::cellChanged, this, &Editor::propertyEditorCellChanged);
+  connect(property_editor, &QTableWidget::itemSelectionChanged,
+  [this]()
+  {
+    const int row = property_editor->currentRow();
+    if (row < 0)
     {
-      const int row = property_editor->currentRow();
-      if (row < 0)
-      {
-        delete_param_button->setEnabled(false);
-        return;
-      }
-      QTableWidgetItem* item = property_editor->item(row, 0);
-      delete_param_button->setEnabled(
-        item && item->data(Qt::UserRole).toBool());
-    });
+      delete_param_button->setEnabled(false);
+      return;
+    }
+    QTableWidgetItem* item = property_editor->item(row, 0);
+    delete_param_button->setEnabled(item && item->data(Qt::UserRole).toBool());
+  });
 
+  return property_editor;
+}
+
+QLabel* Editor::createPropertyLabel()
+{
+  QLabel* properties_label = new QLabel("Properties");
+  properties_label->setObjectName("sectionHeading");
+
+  return properties_label;
+}
+
+QHBoxLayout* Editor::createPropertyButtons()
+{
   QHBoxLayout* param_button_layout = new QHBoxLayout;
 
   add_param_button = new QPushButton("Add property...");
   add_param_button->setEnabled(false);
-  connect(
-    add_param_button, &QAbstractButton::clicked,
-    this, &Editor::addParamButtonClicked);
+  connect(add_param_button, &QAbstractButton::clicked, this, &Editor::addParamButtonClicked);
 
   delete_param_button = new QPushButton("Delete property");
   delete_param_button->setEnabled(false);
-  connect(
-    delete_param_button, &QAbstractButton::clicked,
-    this, &Editor::deleteParamButtonClicked);
+  connect(delete_param_button, &QAbstractButton::clicked, this, &Editor::deleteParamButtonClicked);
 
   param_button_layout->addWidget(add_param_button);
   param_button_layout->addWidget(delete_param_button);
 
-  QVBoxLayout* right_column_layout = new QVBoxLayout;
-  right_column_layout->addWidget(right_tab_widget);
+  return param_button_layout;
+}
 
-  QLabel* properties_label = new QLabel("Properties");
-  properties_label->setObjectName("sectionHeading");
-  right_column_layout->addWidget(properties_label);
+QPushButton* Editor::createLineStyleButton()
+{
   line_style_button = new QPushButton("Line style...");
   line_style_button->setObjectName("lineStyleButton");
   line_style_button->setEnabled(false);
-  connect(line_style_button, &QPushButton::clicked,
-    this, &Editor::editLineStyle);
-  right_column_layout->addWidget(line_style_button);
-  right_column_layout->addWidget(property_editor);
-  right_column_layout->addLayout(param_button_layout);
+  connect(line_style_button, &QPushButton::clicked, this, &Editor::editLineStyle);
 
-  QWidget* inspector = new QWidget;
-  inspector->setObjectName("inspector");
-  right_column_layout->setContentsMargins(12, 12, 12, 12);
-  right_column_layout->setSpacing(10);
-  inspector->setLayout(right_column_layout);
-  inspector->setMinimumWidth(360);
+  return line_style_button;
+}
 
-  QSplitter* workspace = new QSplitter(Qt::Horizontal, this);
-  // MapView ignores tool mouse events so they reach the editor. Every
-  // intermediate widget must track hover motion for live tool previews.
-  workspace->setMouseTracking(true);
-  workspace->addWidget(map_view);
-  workspace->addWidget(inspector);
-  workspace->setChildrenCollapsible(false);
-  workspace->setStretchFactor(0, 1);
-  workspace->setStretchFactor(1, 0);
-  workspace->setSizes({1000, 420});
-  setMouseTracking(true);
-  setCentralWidget(workspace);
-
-  // BUILDING MENU
+void Editor::createBuildingMenu()
+{
   QMenu* building_menu = menuBar()->addMenu("&Building");
-
-  building_menu->addAction(
-    "&New...",
-    this,
-    &Editor::buildingNew,
-    QKeySequence(Qt::CTRL + Qt::Key_N));
-
-  building_menu->addAction(
-    "&Open...",
-    this,
-    &Editor::buildingOpen,
-    QKeySequence(Qt::CTRL + Qt::Key_O));
-
-  building_menu->addAction(
-    "&Save YAML",
-    this,
-    &Editor::buildingSave,
-    QKeySequence(Qt::CTRL + Qt::Key_S));
-
-  building_menu->addAction("Export navigation JSON...", this, [this]()
-    {
-      QFileDialog dialog(this, "Export navigation map");
-      dialog.setNameFilter("Navigation JSON (*.json)");
-      dialog.setDefaultSuffix("json");
-      dialog.setAcceptMode(QFileDialog::AcceptSave);
-      dialog.selectFile(QFileInfo(QString::fromStdString(
-        building.getFilename())).completeBaseName() + ".json");
-      if (dialog.exec() != QDialog::Accepted)
-        return;
-      const QString path = dialog.selectedFiles().first();
-      if (!building.exportNavigation(path.toStdString()))
-      {
-        QMessageBox::critical(this, "Export failed",
-          "Unable to export navigation JSON. Check the map and output path.");
-        return;
-      }
-      statusBar()->showMessage("Exported " + path, 5000);
-    });
-
-  building_menu->addAction("Door vertex offset...", this, [this]()
-    {
-      double current = 0.5;
-      const auto it = building.params.find("door_vertex_offset");
-      if (it != building.params.end() && it->second.type == Param::DOUBLE)
-        current = it->second.value_double;
-      bool accepted = false;
-      const double value = QInputDialog::getDouble(this, "Door vertices",
-        "Distance from doorway (meters):", current, 0.01, 100.0, 2, &accepted);
-      if (!accepted)
-        return;
-      building.params["door_vertex_offset"] = Param(value);
-      createScene();
-      setWindowModified(true);
-    });
-
-  building_menu->addAction(
-    "&Export layer alignment points for level",
-    this,
-    &Editor::buildingExportFeatures,
-    QKeySequence(Qt::CTRL + Qt::Key_E));
-
+  building_menu->addAction("&New...", this, &Editor::buildingNew, QKeySequence(Qt::CTRL + Qt::Key_N));
+  building_menu->addAction("&Open...", this, &Editor::buildingOpen, QKeySequence(Qt::CTRL + Qt::Key_O));
+  building_menu->addAction("&Save YAML", this, &Editor::buildingSave, QKeySequence(Qt::CTRL + Qt::Key_S));
+  building_menu->addAction("Export navigation JSON...", this, &Editor::buildingExportNavJson);
+  building_menu->addAction("Door vertex offset...", this, &Editor::buildingDoorVertexOffset);
+  building_menu->addAction("&Export layer alignment points for level", this, &Editor::buildingExportFeatures, QKeySequence(Qt::CTRL + Qt::Key_E));
   building_menu->addSeparator();
+  building_menu->addAction("E&xit", this, &QWidget::close, QKeySequence(Qt::CTRL + Qt::Key_Q));
+}
 
-  building_menu->addAction(
-    "E&xit",
-    this,
-    &QWidget::close,
-    QKeySequence(Qt::CTRL + Qt::Key_Q));
-
+void Editor::createEditMenu()
+{
   // EDIT MENU
   QMenu* edit_menu = menuBar()->addMenu("&Edit");
-  edit_menu->addAction(
-    "&Undo",
-    this,
-    &Editor::editUndo,
-    QKeySequence::Undo);
-  edit_menu->addAction(
-    "&Redo",
-    this,
-    &Editor::editRedo,
-    QKeySequence::Redo);
+  edit_menu->addAction("&Undo", this, &Editor::editUndo, QKeySequence::Undo);
+  edit_menu->addAction("&Redo", this, &Editor::editRedo, QKeySequence::Redo);
   edit_menu->addSeparator();
-
-  edit_menu->addAction(
-    "&Building properties...",
-    this,
-    &Editor::editBuildingProperties);
+  edit_menu->addAction("&Building properties...", this, &Editor::editBuildingProperties);
   edit_menu->addSeparator();
-
-  edit_menu->addAction(
-    "Rotate all models...",
-    this,
-    &Editor::editRotateAllModels);
+  edit_menu->addAction("Rotate all models...", this, &Editor::editRotateAllModels);
   edit_menu->addSeparator();
-
-  edit_menu->addAction(
-    "Optimize layer transforms",
-    this,
-    &Editor::editOptimizeLayerTransforms,
-    QKeySequence(Qt::CTRL + Qt::Key_T));
+  edit_menu->addAction("Optimize layer transforms", this, &Editor::editOptimizeLayerTransforms, QKeySequence(Qt::CTRL + Qt::Key_T));
   edit_menu->addSeparator();
-
-  edit_menu->addAction(
-    "Align &colinear",
-    this,
-    &Editor::editAlignColinear,
-    QKeySequence(Qt::Key_Slash));
+  edit_menu->addAction("Align &colinear", this, &Editor::editAlignColinear, QKeySequence(Qt::Key_Slash));
   edit_menu->addSeparator();
-
   edit_menu->addAction("&Preferences...", this, &Editor::editPreferences);
+}
 
-  // VIEW MENU
+void Editor::createViewMenu()
+{
   QMenu* view_menu = menuBar()->addMenu("&View");
-  view_models_action =
-    view_menu->addAction("&Models", this, &Editor::viewModels);
+  view_models_action = view_menu->addAction("&Models", this, &Editor::viewModels);
   view_models_action->setCheckable(true);
   view_models_action->setChecked(true);
-
-  view_tiles_action =
-    view_menu->addAction("Map &Tiles", this, &Editor::viewTiles);
+  view_tiles_action = view_menu->addAction("Map &Tiles", this, &Editor::viewTiles);
   view_tiles_action->setCheckable(true);
   view_tiles_action->setChecked(true);
-
   view_menu->addSeparator();
-
   view_menu->addAction("&Reset zoom level", this, &Editor::zoomReset);
+}
 
-  // HELP MENU
+void Editor::createHelpMenu()
+{
   QMenu* help_menu = menuBar()->addMenu("&Help");
-
   help_menu->addAction("&About", this, &Editor::helpAbout);
   help_menu->addAction("About &Qt", &QApplication::aboutQt);
+}
 
-  // TOOLBAR
+void Editor::createToolbar()
+{
   toolbar = new QToolBar("Map tools", this);
   toolbar->setMovable(false);
   toolbar->setIconSize(QSize(24, 24));
-
   tool_button_group = new QButtonGroup(this);
   tool_button_group->setExclusive(true);
-
   createToolButton(TOOL_SELECT, ":icons/select.svg", "Select (Esc)");
   createToolButton(TOOL_MOVE, ":icons/move.svg", "Move (M)");
   createToolButton(TOOL_ROTATE, ":icons/rotate.svg", "Rotate (R)");
   toolbar->addSeparator();
   createToolButton(TOOL_ADD_VERTEX, ":icons/vertex.svg", "Add Vertex (V)");
   createToolButton(TOOL_ADD_FEATURE, ":icons/feature.svg", "Add Feature");
-  createToolButton(TOOL_ADD_CONSTRAINT,
-    ":icons/constraint.svg",
-    "Add Constraint");
-  createToolButton(
-    TOOL_ADD_FIDUCIAL,
-    ":icons/fiducial.svg",
-    "Add Level Alignment Fiducial");
+  createToolButton(TOOL_ADD_CONSTRAINT, ":icons/constraint.svg", "Add Constraint");
+  createToolButton(TOOL_ADD_FIDUCIAL, ":icons/fiducial.svg", "Add Level Alignment Fiducial");
   createToolButton(TOOL_ADD_LANE, ":icons/lane.svg", "Add Lane (L)");
   createToolButton(TOOL_ADD_WALL, ":icons/wall.svg", "Add Wall (W)");
-  createToolButton(
-    TOOL_ADD_MEAS,
-    ":icons/measurement.svg",
-    "Add Measurement (T)");
+  createToolButton(TOOL_ADD_MEAS, ":icons/measurement.svg", "Add Measurement (T)");
   createToolButton(TOOL_ADD_DOOR, ":icons/door.svg", "Add Door (D)");
   createToolButton(TOOL_ADD_MODEL, ":icons/model.svg", "Add Model (O)");
   toolbar->addSeparator();
-  createToolButton(TOOL_ADD_FLOOR, ":icons/floor.svg",
-    "Add floor polygon (F)");
+  createToolButton(TOOL_ADD_FLOOR, ":icons/floor.svg", "Add floor polygon (F)");
   createToolButton(TOOL_ADD_HOLE, ":icons/hole.svg", "Add hole polygon");
   createToolButton(TOOL_ADD_ROI, ":icons/roi.svg", "Add region of interest");
   createToolButton(TOOL_EDIT_POLYGON, ":icons/polygon.svg", "Edit Polygon (E)");
   createToolButton(TOOL_ADD_HUMAN_LANE, ":icons/human_lane.svg", "Add Human Lane with width");
-
-  connect(
-    tool_button_group,
-    QOverload<int, bool>::of(&QButtonGroup::buttonToggled),
-    this, &Editor::toolToggled);
-
   toolbar->addSeparator();
-
   addToolBar(Qt::TopToolBarArea, toolbar);
 
-  // STATUS BAR
-  cache_size_label = new QLabel("cache size");
-  statusBar()->addPermanentWidget(cache_size_label);
-  map_view->updateCacheSizeLabel(cache_size_label);
-
-  ///////////////////////////////////////////////////////////
-  // SET SIZE
-  const int width =
-    settings.contains(preferences_keys::window_width) ?
-    settings.value(preferences_keys::window_width).toInt() :
-    QGuiApplication::primaryScreen()->availableSize().width();
-
-  const int height =
-    settings.contains(preferences_keys::window_height) ?
-    settings.value(preferences_keys::window_height).toInt() :
-    QGuiApplication::primaryScreen()->availableSize().height();
-
-  const int left =
-    settings.contains(preferences_keys::window_left) ?
-    settings.value(preferences_keys::window_left).toInt() :
-    0;
-
-  const int top =
-    settings.contains(preferences_keys::window_top) ?
-    settings.value(preferences_keys::window_top).toInt() :
-    0;
-
-  setGeometry(left, top, width, height);
-  map_view->adjustSize();
+  connect(tool_button_group, QOverload<int, bool>::of(&QButtonGroup::buttonToggled), this, &Editor::toolToggled);
 
   // default tool is the "select" tool
   tool_button_group->button(TOOL_SELECT)->click();
-
-  loadModelNames();
-  level_table->setCurrentCell(level_idx, 0);
-
-  cache_size_update_timer = new QTimer;
-  connect(
-    cache_size_update_timer,
-    &QTimer::timeout,
-    this,
-    &Editor::cacheSizeUpdateTimerTimeout);
-  cache_size_update_timer->start(10 * 1000);
 }
 
-Editor::~Editor()
+QLabel* Editor::createCacheSizeLabel()
 {
-  delete latest_move_lift;
+  cache_size_label = new QLabel("cache size");
+  
+  return cache_size_label;
 }
 
 void Editor::loadModelNames()
 {
   QSettings settings;
-  QString thumbnail_path(
-    settings.value(preferences_keys::thumbnail_path).toString());
+  QString thumbnail_path(settings.value(preferences_keys::thumbnail_path).toString());
+
   if (thumbnail_path.isEmpty())
   {
     std::string assets_dir;
@@ -565,13 +438,9 @@ void Editor::loadModelNames()
 
     try
     {
-      share_dir =
-        ament_index_cpp::get_package_share_directory(
-        "rmf_traffic_editor_assets");
+      share_dir = ament_index_cpp::get_package_share_directory("rmf_traffic_editor_assets");
 
-      ament_index_cpp::get_resource("rmf_traffic_editor_assets",
-        "assets",
-        assets_dir);
+      ament_index_cpp::get_resource("rmf_traffic_editor_assets", "assets", assets_dir);
     }
     catch (const ament_index_cpp::PackageNotFoundError& e)
     {
@@ -618,10 +487,7 @@ void Editor::loadModelNames()
       model_meters_per_pixel);
 }
 
-QToolButton* Editor::createToolButton(
-  const ToolId id,
-  const QString& icon_filename,
-  const QString& tooltip)
+QToolButton* Editor::createToolButton(const ToolId id, const QString& icon_filename, const QString& tooltip)
 {
   QToolButton* b = new QToolButton(toolbar);
   b->setCheckable(true);
@@ -900,6 +766,49 @@ bool Editor::buildingSave()
     QString::fromStdString(building.getFilename()), 5000);
   setWindowModified(false);
   return true;
+}
+
+bool Editor::buildingDoorVertexOffset()
+{
+  double current = 0.5;
+
+  const auto it = building.params.find("door_vertex_offset");
+
+  if (it != building.params.end() && it->second.type == Param::DOUBLE)
+    current = it->second.value_double;
+  
+  bool accepted = false;
+  const double value = QInputDialog::getDouble(this, "Door vertices", "Distance from doorway (meters):", current, 0.01, 100.0, 2, &accepted);
+  
+  if (!accepted)
+    return false;
+  
+  building.params["door_vertex_offset"] = Param(value);
+  createScene();
+  setWindowModified(true);
+
+  return true;
+}
+
+void Editor::buildingExportNavJson()
+{
+  QFileDialog dialog(this, "Export navigation map");
+
+  dialog.setNameFilter("Navigation JSON (*.json)");
+  dialog.setDefaultSuffix("json");
+  dialog.setAcceptMode(QFileDialog::AcceptSave);
+  dialog.selectFile(QFileInfo(QString::fromStdString(building.getFilename())).completeBaseName() + ".json");
+
+  if (dialog.exec() != QDialog::Accepted)
+    return;
+
+  const QString path = dialog.selectedFiles().first();
+  if (!building.exportNavigation(path.toStdString()))
+  {
+    QMessageBox::critical(this, "Export failed", "Unable to export navigation JSON. Check the map and output path.");
+    return;
+  }
+  statusBar()->showMessage("Exported " + path, 5000);
 }
 
 bool Editor::buildingExportFeatures()
@@ -1537,25 +1446,18 @@ void Editor::layerEditButtonClicked(const int row_idx)
   dialog->show();
   dialog->raise();
   dialog->activateWindow();
-  connect(
-    dialog,
-    &LayerDialog::redraw,
-    [=]()
-    {
-      layer_table->update(building, level_idx, layer_idx);
-      createScene();
-    }
-  );
-  connect(
-    dialog,
-    &LayerDialog::centerLayer,
-    [=]()
-    {
-      dialog->setCenter(
-        map_view->getCenter().x(),
-        map_view->getCenter().y());
-    }
-  );
+
+  connect(dialog, &LayerDialog::redraw,
+  [=]()
+  {
+    layer_table->update(building, level_idx, layer_idx);
+    createScene();
+  });
+  connect(dialog, &LayerDialog::centerLayer,
+  [=]()
+  {
+    dialog->setCenter(map_view->getCenter().x(), map_view->getCenter().y());
+  });
 }
 
 void Editor::sanityCheck()
@@ -3251,6 +3153,58 @@ void Editor::clearCurrentToolBuffer()
 
   if (!clicked_feature_id.isNull())
     clicked_feature_id = QUuid();
+}
+
+void Editor::levelChange(const int row_idx)
+{
+  if (latest_move_lift)
+    clearCurrentToolBuffer();
+
+  level_idx = row_idx;
+  layer_idx = 0;
+
+  updateTables();
+
+  level_table->setCurrentCell(row_idx, 0);
+
+  createScene();
+  zoomReset();
+
+  setWindowModified(true);
+}
+
+void Editor::levelCellClicked(const int row_idx)
+{
+  if (row_idx < static_cast<int>(building.levels.size()))
+  {
+    if (latest_move_lift)
+      clearCurrentToolBuffer();
+
+    // save the center point of the current level's image coordinates
+    QPoint p_center_window(map_view->viewport()->width() / 2, map_view->viewport()->height() / 2);
+    QPointF p_center_scene = map_view->mapToScene(p_center_window);
+    QPointF p_transformed;
+
+    building.transformBetweenLevels(level_idx, p_center_scene, row_idx, p_transformed);
+
+    // maintain the view scale
+    double scale = map_view->transform().m11() * building.levels[row_idx].drawing_meters_per_pixel / building.levels[level_idx].drawing_meters_per_pixel;
+
+    if (isnan(scale))
+    {
+      scale = 1.0;
+      p_transformed = QPointF(0.0, 0.0);
+    }
+
+    level_idx = row_idx;
+    createScene();
+
+    QTransform t;
+    double y_flip = building.coordinate_system.isYFlipped() ? 1 : -1;
+    t.scale(scale, y_flip * scale);
+    map_view->setTransform(t);
+    map_view->centerOn(p_transformed);
+  }
 }
 
 void Editor::levelTableUpdateSlot()
