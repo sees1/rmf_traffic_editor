@@ -31,48 +31,39 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class QLabel;
 
+struct MapTilePixmapItem
+{
+public:
+  enum State { QUEUED = 0, REQUESTED, COMPLETED };
+
+public:
+  int zoom = 0;
+  int x = 0;
+  int y = 0;
+
+  QGraphicsPixmapItem* item = nullptr;
+  
+  State state;
+};
+
+struct MapTileRequest
+{
+public:
+  int zoom = 0;
+  int x = 0;
+  int y = 0;
+};
+
 class MapView : public QGraphicsView
 {
   Q_OBJECT
 
-private:
-  struct MapTilePixmapItem
-  {
-  public:
-    enum State
-    {
-      QUEUED,
-      REQUESTED,
-      COMPLETED
-    };
-
-  public:
-    int zoom = 0;
-    int x = 0;
-    int y = 0;
-    QGraphicsPixmapItem* item = nullptr;
-    State state;
-  };
-
-  struct MapTileRequest
-  {
-  public:
-    int zoom = 0;
-    int x = 0;
-    int y = 0;
-
-    // todo: time it was requested?
-  };
-
 public:
-  MapView(QWidget* parent, const Building& building_);
+  MapView(QWidget* parent, const Building& b);
 
   void zoomFit(int level_index);
 
-  void setShowTiles(const bool show_tiles_)
-  {
-    show_tiles = show_tiles_;
-  }
+  void setShowTiles(const bool show_tiles_) { show_tiles = show_tiles_; }
 
   void drawTiles();
 
@@ -96,27 +87,32 @@ protected:
 private:
   void requestTile(const int zoom, const int x, const int y);
 
-  void renderTile(
-    const int zoom,
-    const int x,
-    const int y,
-    const QPixmap& pixmap,
-    const MapTilePixmapItem::State state);
+  void renderTile(const int zoom,
+                  const int x,
+                  const int y,
+                  const QPixmap& pixmap,
+                  const MapTilePixmapItem::State state);
 
   void requestFinished(QNetworkReply* reply);
 
   void processRequestQueue();
 
 private:
-  bool is_panning = false;
-  int pan_start_x = 0;
-  int pan_start_y = 0;
   const Building& building;
-  bool show_tiles = false;  // ignore first few resize events during startup
+
+  bool is_panning;
+  int pan_start_x;
+  int pan_start_y;
+  
+  bool show_tiles;  // ignore first few resize events during startup
+  
   MapTileCache tile_cache;
+  
   std::vector<MapTilePixmapItem> tile_pixmap_items;
   std::vector<MapTileRequest> tile_requests;
-  QNetworkAccessManager* network = nullptr;
+  
+  QNetworkAccessManager* network;
+  
   QPointF last_center;
 };
 

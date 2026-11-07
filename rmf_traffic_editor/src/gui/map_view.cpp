@@ -26,16 +26,16 @@
 
 using std::string;
 
-MapView::MapView(QWidget* parent, const Building& building_)
+MapView::MapView(QWidget* parent, const Building& b)
 : QGraphicsView(parent),
-  building(building_)
+  building(b),
+  is_panning(false),
+  pan_start_x(0),
+  pan_start_y(0),
+  show_tiles(false),
 {
   network = new QNetworkAccessManager(this);
-  connect(
-    network,
-    &QNetworkAccessManager::finished,
-    this,
-    &MapView::requestFinished);
+  connect(network, &QNetworkAccessManager::finished, this, &MapView::requestFinished);
 
   setMouseTracking(true);
   viewport()->setMouseTracking(true);
@@ -112,18 +112,11 @@ void MapView::wheelEvent(QWheelEvent* e)
     if (scene_w < 0.1 * M_PI * CoordinateSystem::wgs84_a)
     {
       const int n = 10;
-      setSceneRect(
-        QRectF(
-          p_start.x() - n * scene_w,
-          p_start.y() + n * scene_w,
-          2 * n * scene_w,
-          -2 * n * scene_h));
+      setSceneRect(QRectF(p_start.x() - n * scene_w, p_start.y() + n * scene_h, 2 * n * scene_w, -2 * n * scene_h));
     }
     else
-    {
-      // set a null rect, in order to the original scene rect from the scene
-      setSceneRect(QRectF());
-    }
+      setSceneRect(QRectF()); // set a null rect, in order to the original scene rect from the scene
+    
     drawTiles();
   }
 }
@@ -179,6 +172,7 @@ void MapView::resizeEvent(QResizeEvent*)
 void MapView::zoomFit(int level_idx)
 {
   const Level* level = nullptr;
+
   if (level_idx >= 0 && level_idx < static_cast<int>(building.levels.size()))
     level = &building.levels[level_idx];
   else if (building.levels.size() > 0)
@@ -195,11 +189,9 @@ void MapView::zoomFit(int level_idx)
 
     // A newly imported floorplan may have no vertices yet. Fit the image
     // itself, not the padded scene rectangle or a previous level's viewport.
-    if (!building.coordinate_system.isGlobal()
-      && level->drawing_width > 0 && level->drawing_height > 0)
+    if (!building.coordinate_system.isGlobal() && level->drawing_width > 0 && level->drawing_height > 0)
     {
-      fitInView(QRectF(0, 0, level->drawing_width, level->drawing_height),
-        Qt::KeepAspectRatio);
+      fitInView(QRectF(0, 0, level->drawing_width, level->drawing_height), Qt::KeepAspectRatio);
       return;
     }
 
@@ -207,154 +199,102 @@ void MapView::zoomFit(int level_idx)
     const size_t n_vertex = level->vertices.size();
     if (n_vertex > 0)
     {
-      double x_sum = 0, y_sum = 0;
-      for (const auto& v : level->vertices)
+      auto [x_sum, y_sum] = std::accumulate(level->vertices.begin(), level->vertices.end(), std::pair<double, double>{0.0, 0.0}, 
+      [](std::pair<double, double> res, auto&& vertex) -> std::pair<double, double>
       {
-        x_sum += v.x;
-        y_sum += v.y;
-      }
+        return {res.first + vertex.x, res.second + vertex.y};
+      });
+      
       const double xc = x_sum / n_vertex;
       const double yc = y_sum / n_vertex;
+      
       printf("center: (%.3f, %.3f)\n", xc, yc);
       centerOn(QPointF(xc, yc));
     }
   }
 
   if (building.coordinate_system.isGlobal())
-  {
     drawTiles();
-  }
 }
 
 void MapView::drawTiles()
 {
   if (!show_tiles || !building.coordinate_system.hasTiles())
     return;
+
   const int viewport_w = viewport()->width();
   const int viewport_h = viewport()->height();
+
   QPointF ul = mapToScene(QPoint(0, 0));
   QPointF lr = mapToScene(QPoint(viewport_w, viewport_h));
+  
   last_center = mapToScene(QPoint(viewport_w/2, viewport_h/2));
-  //printf("viewport center: (%.3f, %.3f)\n", last_center.x(), last_center.y());
-  // printf("  ul: (%.3f, %.3f)\n", ul.x(), ul.y());
-  // printf("  lr: (%.3f, %.3f)\n", lr.x(), lr.y());
 
   const double x_extent = lr.x() - ul.x();
-  // printf("  x extent: %.3f\n", x_extent);
   const double tiles_visible_x = viewport_w / 256.0;
-  // printf("  tiles_visible_x: %.3f\n", tiles_visible_x);
   const double x_meters_per_tile = x_extent / tiles_visible_x;
-  // printf("  x_meters_per_tile: %.3f\n", x_meters_per_tile);
-  const double zoom_exact =
-    log(M_PI * CoordinateSystem::wgs84_a / x_meters_per_tile) / log(2);
-  // printf("  zoom_exact: %.3f\n", zoom_exact);
+  const double zoom_exact = log(M_PI * CoordinateSystem::wgs84_a / x_meters_per_tile) / log(2);
 
-  int zoom = static_cast<int>(ceil(zoom_exact));
   const int MAX_ZOOM = 20;
-  if (zoom < 0)
-    zoom = 0;
-  if (zoom > MAX_ZOOM)
-    zoom = MAX_ZOOM;
-  // printf("  zoom = %d\n", zoom);
+  int zoom = std::clamp(ceil(zoom_exact), 0, MAX_ZOOM);
 
   const double eps = 0.0001;
   const double MAX_X = M_PI * CoordinateSystem::wgs84_a;
-  const double ulx_clamped = std::max(std::min(ul.x(), MAX_X - eps), -MAX_X);
-  const double lrx_clamped = std::max(std::min(lr.x(), MAX_X - eps), -MAX_X);
-  // printf("  clamped x range: (%.3f, %.3f)\n", ulx_clamped, lrx_clamped);
+  const double ulx_clamped = std::clamp(ul.x(), -MAX_X, MAX_X - eps);
+  const double lrx_clamped = std::clamp(lr.x(), -MAX_X, MAX_X - eps);
+  const double uly_clamped = std::clamp(ul.y(), -MAX_X, MAX_X - eps);
+  const double lry_clamped = std::clamp(lr.y(), -MAX_X, MAX_X - eps);
 
-  const int x_min_tile =
-    floor((ulx_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
-  const int x_max_tile =
-    floor((lrx_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
-  // printf("  x tile range: [%d, %d]\n", x_min_tile, x_max_tile);
+  const int x_min_tile = floor((ulx_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
+  const int x_max_tile = floor((lrx_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
+  const int y_min_tile = (1 << zoom) - 1 - floor((uly_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
+  const int y_max_tile = (1 << zoom) - 1 - floor((lry_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
 
-  // because EPSG 3857 is a square, we can use MAX_X for the Y extents also
-  const double uly_clamped = std::max(std::min(ul.y(), MAX_X - eps), -MAX_X);
-  const double lry_clamped = std::max(std::min(lr.y(), MAX_X - eps), -MAX_X);
-  // printf("  clamped y range: (%.3f, %.3f)\n", lry_clamped, uly_clamped);
-
-  const int y_min_tile =
-    (1 << zoom)
-    - 1
-    - floor((uly_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
-  const int y_max_tile =
-    (1 << zoom)
-    - 1
-    - floor((lry_clamped + MAX_X) / (2. * MAX_X) * (1 << zoom));
-  // printf("  y tile range: [%d, %d]\n", y_min_tile, y_max_tile);
-
-  std::vector<size_t> remove_idx;
-  for (size_t i = 0; i < tile_pixmap_items.size(); i++)
+  auto erase_it = std::remove_if(tile_pixmap_items.begin(), tile_pixmap_items.end(),
+  [zoom, x_min_tile, x_max_tile, y_min_tile, y_max_tile](auto&& pixmap_tile)
   {
-    const MapTilePixmapItem& item = tile_pixmap_items[i];
-    if (item.zoom != zoom
-      || item.x < x_min_tile
-      || item.x > x_max_tile
-      || item.y < y_min_tile
-      || item.y > y_max_tile)
+    return pixmap_tile.zoom != zoom ||
+           pixmap_tile.x < x_min_tile ||
+           pixmap_tile.x > x_max_tile ||
+           pixmap_tile.y < y_min_tile ||
+           pixmap_tile.y > y_max_tile;
+  });
+
+  std::for_each(erase_it, tile_pixmap_items.end(),
+  [this](auto&& tile)
+  {
+    scene()->removeItem(tile.item);
+    delete tile.item;
+  });
+
+  tile_pixmap_items.erase(erase_it, tile_pixmap_items.end());
+
+  for (int y = y_min_tile; y <= y_max_tile; ++y)
+  {
+    for (int x = x_min_tile; x <= x_max_tile; ++x)
     {
-      remove_idx.push_back(i);
-      /*
-      printf("  need to remove remove tile idx %d: zoom=%d, (%d, %d)\n",
-        (int)i,
-        item.zoom,
-        item.x,
-        item.y);
-      */
-    }
-  }
-
-  for (auto idx_it = remove_idx.rbegin(); idx_it != remove_idx.rend(); ++idx_it)
-  {
-    MapTilePixmapItem& item = tile_pixmap_items[*idx_it];
-    /*
-    printf("  now removing tile idx %d: zoom=%d, (%d, %d)\n",
-      (int)*idx_it,
-      item.zoom,
-      item.x,
-      item.y);
-    */
-    scene()->removeItem(item.item);
-    delete item.item;
-    tile_pixmap_items.erase(tile_pixmap_items.begin() + *idx_it);
-  }
-
-  for (int y = y_min_tile; y <= y_max_tile; y++)
-  {
-    for (int x = x_min_tile; x <= x_max_tile; x++)
-    {
-      bool found = false;
-      for (size_t i = 0; i < tile_pixmap_items.size(); i++)
+      auto found_it = std::find_if(tile_pixmap_items.begin(), tile_pixmap_items.end(),
+      [x, y](auto&& tile)
       {
-        const MapTilePixmapItem& item = tile_pixmap_items[i];
-        if (item.x == x && item.y == y)
-        {
-          found = true;
-          break;
-        }
-      }
-      if (found)
+        return tile.x == x && tile.y == y;
+      });
+
+      if (found_it == tile_pixmap_items.end())
         continue;
 
-      // printf("creating tile item zoom=%d, x=%d, y=%d)\n", zoom, x, y);
       std::optional<const QByteArray> p = tile_cache.get(zoom, x, y);
+      
       if (p.has_value())
       {
-        //printf("  HOORAY found the pixmap\n");
         QImage image;
         bool parse_ok = image.loadFromData(p.value());
         if (parse_ok)
         {
-          QPixmap pixmap(QPixmap::fromImage(image.convertToFormat(
-              QImage::Format_Grayscale8)));
-
+          QPixmap pixmap(QPixmap::fromImage(image.convertToFormat(QImage::Format_Grayscale8)));
           renderTile(zoom, x, y, pixmap, MapTilePixmapItem::State::COMPLETED);
         }
         else
-        {
           printf("oh no! couldn't parse image file in cache\n");
-        }
       }
       else
       {
@@ -375,6 +315,7 @@ void MapView::drawTiles()
       }
     }
   }
+
   processRequestQueue();
 }
 
@@ -386,43 +327,31 @@ void MapView::requestTile(const int zoom, const int x, const int y)
 
   if (s_num_requests <= 2000)
   {
-    printf("  requesting tile %d: zoom=%d, x=%d, y=%d\n",
-      s_num_requests,
-      zoom,
-      x,
-      y);
+    printf("requesting tile %d: zoom=%d, x=%d, y=%d\n", s_num_requests, zoom, x, y);
 
     QString request_url;
-    request_url.sprintf(
-      "https://tiles.sandbox.open-rmf.org/tile/%d/%d/%d.png",
-      zoom,
-      x,
-      y);
+    request_url.sprintf("https://tiles.sandbox.open-rmf.org/tile/%d/%d/%d.png", zoom, x, y);
+    
     QNetworkRequest request;
     request.setUrl(QUrl(request_url));
-    request.setRawHeader(
-      "User-Agent",
-      "TrafficEditor/1.4 (http://open-rmf.org)");
+    request.setRawHeader("User-Agent", "TrafficEditor/1.4 (http://open-rmf.org)");
     network->get(request);
   }
   else
-  {
-    printf("past max number of requests this run (%d)..."
-      "in case this is a wild bug, I'm stopping now!\n",
-      s_num_requests);
-  }
+    printf("past max number of requests this run (%d)... in case this is a wild bug, I'm stopping now!\n", s_num_requests);
 }
 
-void MapView::renderTile(
-  const int zoom,
-  const int tile_x,
-  const int tile_y,
-  const QPixmap& pixmap,
-  const MapView::MapTilePixmapItem::State state)
+void MapView::renderTile(const int zoom,
+                         const int tile_x,
+                         const int tile_y,
+                         const QPixmap& pixmap,
+                         const MapView::MapTilePixmapItem::State state)
 {
   const double MAX_X = M_PI * CoordinateSystem::wgs84_a;
+
   // printf("  adding tile: zoom=%d, (%d, %d)\n", zoom, x, y);
   QGraphicsPixmapItem* pixmap_item = scene()->addPixmap(pixmap);
+
   pixmap_item->setScale(2. * MAX_X / 256.0 / (1 << zoom));
   pixmap_item->setZValue(-10.0);
   //pixmap_item->setScale(360. / 256.0 / (1 << zoom));
@@ -431,11 +360,8 @@ void MapView::renderTile(
   // const double lon_deg = x / static_cast<double>(1 << zoom) * 360. - 180.;
   // const double n = M_PI - 2.0 * M_PI * y / static_cast<double>(1 << zoom);
   // const double lat = atan(0.5 * (exp(n) - exp(-n)));
-  const double x =
-    (tile_x / static_cast<double>(1 << zoom) * 2. * MAX_X - MAX_X);
-
-  const double y =
-    (-tile_y / static_cast<double>(1 << zoom) * 2. * MAX_X + MAX_X);
+  const double x = (tile_x / static_cast<double>(1 << zoom) * 2. * MAX_X - MAX_X);
+  const double y = (-tile_y / static_cast<double>(1 << zoom) * 2. * MAX_X + MAX_X);
 
   // project the latitude to "web mercator" latitude
   //const double lat_deg_mercator = 180. / M_PI * log(tan(lat) + 1. / cos(lat));
@@ -550,6 +476,7 @@ void MapView::updateCacheSizeLabel(QLabel* label)
 void MapView::processRequestQueue()
 {
   int n_requested = 0;
+
   for (const auto& tile : tile_pixmap_items)
   {
     if (tile.state == MapTilePixmapItem::State::REQUESTED)
