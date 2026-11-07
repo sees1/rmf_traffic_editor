@@ -1064,24 +1064,27 @@ void Building::draw(
 
 std::optional<Polygon*> Building::getSelectedPolygon(const int level_idx)
 {
-  auto polygon_it = std::find_if(levels[level_idx].begin(), levels[level_idx].end(),
+  if (level_idx < 0 || level_idx >= static_cast<int>(levels.size()))
+    return std::nullopt;
+
+  auto polygon_it = std::find_if(levels[level_idx].polygons.begin(), levels[level_idx].polygons.end(),
   [](auto&& polygon)
   {
     return polygon.isSelected();
   });
 
-  if (polygon_it != levels[level_idx].end())
+  if (polygon_it != levels[level_idx].polygons.end())
     return std::addressof(*polygon_it);
 
   return std::nullopt;
 }
 
-Polygon::EdgeDragPolygon Building::polygonEdgeDragPress(const int level_idx,
+EdgeDragPolygon Building::polygonEdgeDragPress(const int level_idx,
                                                         const Polygon* polygon,
                                                         const double x,
                                                         const double y)
 {
-  Polygon::EdgeDragPolygon edp;
+  EdgeDragPolygon edp;
 
   if (level_idx < 0 || level_idx >= static_cast<int>(levels.size()))
     return edp;
@@ -1299,18 +1302,18 @@ std::vector<int> Building::updateGraphOnLevel(
 
   // A polygon using a removed vertex can no longer represent its original shape.
   level.polygons.erase(std::remove_if(level.polygons.begin(), level.polygons.end(),
-  [this](auto&& polygon)
+  [&new_index](auto&& polygon)
   {
-    return std::any_of(polygon.begin(), polygon.end(), [&](int index) { return new_index(index) < 0; })
+    return std::any_of(polygon.begin(), polygon.end(), [&](int index) { return new_index(index) < 0; });
   }),
   level.polygons.end());
 
   for(auto&& polygon : level.polygons)
   {
     std::for_each(polygon.begin(), polygon.end(),
-    [](auto&& vertex_idx)
+    [&new_index](auto&& vertex_idx)
     {
-      vertex_idx = new_index(vertex_idx)
+      vertex_idx = new_index(vertex_idx);
     });
   }
 

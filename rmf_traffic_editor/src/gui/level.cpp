@@ -264,13 +264,13 @@ YAML::Node Level::toYaml(const CoordinateSystem& coordinate_system) const
 
   for (const auto& polygon : polygons)
   {
-    switch (polygon.type)
+    switch (polygon.getType())
     {
       case Polygon::FLOOR:
-        y["floors"].push_back(polygon.toYaml());
+        y["floors"].push_back(static_cast<YAML::Node>(polygon));
         break;
       case Polygon::HOLE:
-        y["holes"].push_back(polygon.toYaml());
+        y["holes"].push_back(static_cast<YAML::Node>(polygon));
         break;
       default:
         printf("tried to save an unknown polygon type: %d\n", static_cast<int>(polygon.getType()));
@@ -659,7 +659,7 @@ std::vector<Polygon> Level::polygonsWithVertex(int vertex_idx) const
 {
   std::vector<Polygon> result;
 
-  std::copy_if(polygons.begin(), polygons.end(), std:back_inserter(result),
+  std::copy_if(polygons.begin(), polygons.end(), std::back_inserter(result),
   [vertex_idx](auto&& polygon)
   {
     return polygon.hasVertex(vertex_idx);
@@ -1190,7 +1190,18 @@ void Level::drawPolygon(
   const QBrush& brush,
   const Polygon& polygon) const
 {
-  renderer.draw(scene, polygon);
+  QVector<QPointF> polygon_vertices;
+  for (const auto vertex_idx : polygon)
+  {
+    const Vertex& v = vertices[vertex_idx];
+    polygon_vertices.append(QPointF(v.x, v.y));
+  }
+
+  QPen pen(Qt::black);
+  pen.setWidthF(0.05 / drawing_meters_per_pixel);
+  const QBrush selected_brush(QColor::fromRgbF(1.0, 0.0, 0.0, 0.5));
+  scene->addPolygon(QPolygonF(polygon_vertices), pen,
+    polygon.isSelected() ? selected_brush : brush);
 }
 
 void Level::drawPolygons(QGraphicsScene* scene) const
@@ -1200,17 +1211,17 @@ void Level::drawPolygons(QGraphicsScene* scene) const
 
   // first draw the floor polygons
   std::for_each(polygons.begin(), polygons.end(),
-  [scene, this](auto&& polygon)
+  [scene, this, &floor_brush](auto&& polygon)
   {
-    if (polygon.type == Polygon::Type::FLOOR)
+    if (polygon.getType() == Polygon::Type::FLOOR)
       drawPolygon(scene, floor_brush, polygon);
   });
 
   // now draw the holes
   std::for_each(polygons.begin(), polygons.end(),
-  [scene, this](auto&& polygon)
+  [scene, this, &hole_brush](auto&& polygon)
   {
-    if (polygon.type == Polygon::Type::HOLE)
+    if (polygon.getType() == Polygon::Type::HOLE)
       drawPolygon(scene, hole_brush, polygon);
   });
 
@@ -1598,14 +1609,14 @@ double Level::pointToLineSegmentDistance(
  * This function returns the index of the polygon vertex that will be
  * 'split' by the newly created edge
  */
-Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
+EdgeDragPolygon Level::polygonEdgeDragPress(
   const Polygon* polygon,
   const double x,
   const double y)
 {
-  Polygon::EdgeDragPolygon edp;
+  EdgeDragPolygon edp;
 
-  if (polygon == nullptr || polygon.empty())
+  if (polygon == nullptr || polygon->empty())
     return edp;
 
   // cruise along all possible line segments and calculate the distance
@@ -1644,10 +1655,11 @@ Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
   // create the mouse motion polygon and insert a new edge
   QVector<QPointF> polygon_vertices;
 
-  std::transform(polygon.begin(), polygon.end(), std::back_inserter(polygon_vertices),
-  [this, min_idx](auto&& vertex_idx)
+  for (size_t i = 0; i < polygon_size; ++i)
   {
-    const Vertex& v = vertices[vertex_idx];
+    const int v_idx = (*polygon)[i];
+    
+    const Vertex& v = vertices[v_idx];
     
     polygon_vertices.append(QPointF(v.x, v.y));
     
@@ -1656,7 +1668,7 @@ Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
       polygon_vertices.append(QPointF(x, y));  // current mouse location
       edp.movable_vertex = i + 1;
     }
-  });
+  }
 
   edp.polygon = QPolygonF(polygon_vertices);
 
@@ -2333,7 +2345,7 @@ void Level::setSelectedContainingPolygon(const double x, const double y)
     QVector<QPointF> polygon_vertices;
     
     std::transform(polygons[idx].begin(), polygons[idx].end(), std::back_inserter(polygon_vertices),
-    [&this](auto&& vertex_idx)  
+    [this](auto&& vertex_idx)
     {
       const Vertex& v = vertices[vertex_idx];
       return QPointF(v.x, v.y);
@@ -2355,14 +2367,14 @@ void Level::setSelectedContainingPolygon(const double x, const double y)
     return polygons[idx].getType() == Polygon::Type::HOLE;
   });
 
-  if (first_poly_it != containing_polygons.end)
+  if (first_poly_it != containing_polygons.end())
   {
     polygons[*first_poly_it].setSelected(true);
     return;
   }
 
   // if we get here, just return the first thing.
-  polygons[0].setSelected(true);
+  polygons[containing_polygons.front()].setSelected(true);
 }
 
 void Level::computeLayerTransforms()

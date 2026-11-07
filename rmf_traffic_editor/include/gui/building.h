@@ -18,6 +18,7 @@
 #ifndef BUILDING_H
 #define BUILDING_H
 
+#include <optional>
 #include <set>
 
 
@@ -208,9 +209,9 @@ public:
     QGraphicsItem* graphics_item,
     const RenderingOptions& rendering_options);
   */
-  Polygon* getSelectedPolygon(const int level_idx);
+  std::optional<Polygon*> getSelectedPolygon(const int level_idx);
 
-  Polygon::EdgeDragPolygon polygonEdgeDragPress(
+  EdgeDragPolygon polygonEdgeDragPress(
     const int level_idx,
     const Polygon* polygon,
     const double x,

@@ -39,7 +39,6 @@ private:
   Polygon* _polygon;
   int _vert_id;
   int _position;
-  std::vector<int> _old_vertices;
 };
 
 #endif

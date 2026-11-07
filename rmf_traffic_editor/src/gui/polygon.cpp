@@ -16,6 +16,7 @@
 */
 
 #include "polygon.h"
+#include <algorithm>
 using std::string;
 using std::vector;
 
@@ -31,15 +32,17 @@ Polygon::Polygon(const std::vector<int>& vert, const Type type)
 : selected(false),
   type(type),
   vertices(vert)
-{ }
+{
+  createRequiredParameters();
+}
 
 Polygon::Polygon(const YAML::Node& data, const Type type)
-: selected(false)
+: selected(false),
+  type(type)
 {
   if (!data.IsMap())
     throw std::runtime_error("Polygon::from_yaml() expected a map");
   
-  type = polygon_type;
 
   for (YAML::const_iterator it = data["vertices"].begin(); it != data["vertices"].end(); ++it)
     vertices.push_back(it->as<int>());
@@ -81,6 +84,7 @@ Polygon& Polygon::operator=(const Polygon& other)
   type = other.type;
   vertices = other.vertices;
   params = other.params;
+  return *this;
 }
 
 Polygon& Polygon::operator=(Polygon&& other)
@@ -92,6 +96,7 @@ Polygon& Polygon::operator=(Polygon&& other)
   type = other.type;
   vertices = std::move(other.vertices);
   params = std::move(other.params);
+  return *this;
 }
 
 void Polygon::setParam(const std::string& name, const std::string& value)
@@ -145,7 +150,7 @@ bool Polygon::hasVertex(const int vertex_idx) const
   return std::find(vertices.begin(), vertices.end(), vertex_idx) != vertices.end();
 }
 
-Polygon::operator YAML::Node() const;
+Polygon::operator YAML::Node() const
 {
   YAML::Node y;
 

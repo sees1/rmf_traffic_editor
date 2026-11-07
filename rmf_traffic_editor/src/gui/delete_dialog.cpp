@@ -84,7 +84,7 @@ DeleteDialog::DeleteDialog(
     std::for_each(poly_type_to_count.begin(), poly_type_to_count.end(),
     [&s](auto&& type_to_count)
     {
-      s += " - " + std::to_string(polygon_type.second) + " " + polygon_type.first + " polygon(s) \n";
+      s += " - " + std::to_string(type_to_count.second) + " " + type_to_count.first + " polygon(s) \n";
     });
 
     warning_message_vbox_layout->addWidget(new QLabel(QString("This item is linked to: \n%1"

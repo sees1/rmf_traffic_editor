@@ -1890,7 +1890,7 @@ void Editor::propertyEditorCellChanged(int row, int column)
     return;  // stop after finding the first one
   }
 
-  auto poly_it = std::find_if(building.levels[level_idx].polygons.begin(), building.levels[level_idx].polygons.end(),m
+  auto poly_it = std::find_if(building.levels[level_idx].polygons.begin(), building.levels[level_idx].polygons.end(),
   [](auto&& polygon)
   {
     return polygon.isSelected();
@@ -1900,7 +1900,7 @@ void Editor::propertyEditorCellChanged(int row, int column)
   {
     poly_it->setParam(name, value);
     setWindowModified(true);
-    return
+    return;
   }
 
   for (auto& m : building.levels[level_idx].models)
@@ -2932,7 +2932,7 @@ void Editor::mouseEditPolygon(
 
     const int release_vertex_idx = ni.vertex_idx;
 
-    if (std::find(selected_polygon->begin(), selected_polygon->end(), release_vertex_idx) != selected_polygon->end())
+    if (std::find((*selected_polygon)->begin(), (*selected_polygon)->end(), release_vertex_idx) != (*selected_polygon)->end())
       return;// Release vertex is already in the polygon. Don't do anything.
 
     PolygonAddVertCommand* command = new PolygonAddVertCommand(

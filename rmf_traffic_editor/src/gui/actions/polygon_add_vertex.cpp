@@ -23,7 +23,6 @@ PolygonAddVertCommand::PolygonAddVertCommand(
   int vert_id)
 {
   _polygon = polygon;
-  _old_vertices = polygon->vertices;
   _position = position;
   _vert_id = vert_id;
 }
@@ -35,7 +34,7 @@ PolygonAddVertCommand::~PolygonAddVertCommand()
 
 void PolygonAddVertCommand::undo()
 {
-  _polygon->vertices.erase(_polygon->begin() + _position);
+  _polygon->erase(_polygon->begin() + _position);
 }
 
 void PolygonAddVertCommand::redo()

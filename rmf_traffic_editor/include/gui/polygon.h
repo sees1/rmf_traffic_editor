@@ -36,6 +36,7 @@ struct EdgeDragPolygon
 class Polygon final
 {
 public:
+  using size_type = std::vector<int>::size_type;
   using iterator = std::vector<int>::iterator;
   using const_iterator = std::vector<int>::const_iterator;
 
@@ -65,13 +66,13 @@ public:
 public:
   // getter's
   bool isSelected() const { return selected; }
-  bool getType() const { return type; }
+  Type getType() const { return type; }
   bool hasVertex(const int vertex_idx) const;
 
   const std::map<std::string, Param>& getParams() const { return params; }
   
   // setter's
-  void setSelected(const bool fl) { selected = fl }
+  void setSelected(const bool fl) { selected = fl; }
   void setParam(const std::string& name, const std::string& value);
 
 public:

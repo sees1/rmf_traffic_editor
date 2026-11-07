@@ -79,7 +79,7 @@ public:
 
   bool areLayerNamesUnique();
 
-  Polygon::EdgeDragPolygon polygonEdgeDragPress(const Polygon* polygon, const double x, const double y);
+  EdgeDragPolygon polygonEdgeDragPress(const Polygon* polygon, const double x, const double y);
 
   void addVertex(const double x, const double y);
   void addVertex(const Vertex& new_vertex);
@@ -249,7 +249,6 @@ public:
 
   QPixmap floorplan_pixmap;
 
-  Renderer renderer;
 
 private:
   bool _drawing_visible = true;

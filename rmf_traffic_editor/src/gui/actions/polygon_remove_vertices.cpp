@@ -31,14 +31,13 @@ PolygonRemoveVertCommand::~PolygonRemoveVertCommand()
 
 void PolygonRemoveVertCommand::undo()
 {
-  delete _polygon;
-  _polygon = new Polygon(std::move(_old_polygon));
+  *_polygon = _old_polygon;
 }
 
 void PolygonRemoveVertCommand::redo()
 {
   auto vertex_it = std::find_if(_polygon->begin(), _polygon->end(),
-  [size_t needed_idx = _vert_id](auto&& vertex_idx)
+  [needed_idx = _vert_id](auto&& vertex_idx)
   {
     return vertex_idx == needed_idx;
   });

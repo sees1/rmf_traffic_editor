@@ -439,7 +439,7 @@ private:
   int mouse_fiducial_idx;
   std::vector<int> mouse_motion_polygon_vertices;
   //int mouse_motion_polygon_vertex_idx = -1;
-  Polygon::EdgeDragPolygon mouse_edge_drag_polygon;
+  EdgeDragPolygon mouse_edge_drag_polygon;
   QPointF previous_mouse_point;
 
   Eigen::Affine2d lift_scene_to_reference;
