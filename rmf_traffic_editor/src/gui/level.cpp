@@ -139,23 +139,17 @@ bool Level::fromYaml(
   if (_data["floors"] && _data["floors"].IsSequence())
   {
     const YAML::Node& yf = _data["floors"];
+  
     for (YAML::const_iterator it = yf.begin(); it != yf.end(); ++it)
-    {
-      Polygon p;
-      p.fromYaml(*it, Polygon::FLOOR);
-      polygons.push_back(p);
-    }
+      polygons.emplace_back(*it, Polygon::Type::FLOOR);
   }
 
   if (_data["holes"] && _data["holes"].IsSequence())
   {
     const YAML::Node& yf = _data["holes"];
+   
     for (YAML::const_iterator it = yf.begin(); it != yf.end(); ++it)
-    {
-      Polygon p;
-      p.fromYaml(*it, Polygon::HOLE);
-      polygons.push_back(p);
-    }
+      polygons.emplace_back(*it, Polygon::Type::HOLE);
   }
 
   if (_data["elevation"])
@@ -279,8 +273,7 @@ YAML::Node Level::toYaml(const CoordinateSystem& coordinate_system) const
         y["holes"].push_back(polygon.toYaml());
         break;
       default:
-        printf("tried to save an unknown polygon type: %d\n",
-          static_cast<int>(polygon.type));
+        printf("tried to save an unknown polygon type: %d\n", static_cast<int>(polygon.getType()));
         break;
     }
   }
@@ -391,20 +384,28 @@ bool Level::canDeleteCurrentSelection()
     return true;
 
   bool vertex_used = false;
+
   for (const auto& edge : edges)
   {
-    if (edge.start_idx == selected_vertex_idx ||
-      edge.end_idx == selected_vertex_idx)
+    if (edge.start_idx == selected_vertex_idx || edge.end_idx == selected_vertex_idx)
       vertex_used = true;
   }
+
   for (const auto& polygon : polygons)
   {
-    for (const int& vertex_idx : polygon.vertices)
+    auto vertex_it = std::find_if(polygon.begin(), polygon.end(),
+    [selected_vertex_idx](auto&& vertex_idx)
     {
-      if (vertex_idx == selected_vertex_idx)
-        vertex_used = true;
+      return vertex_idx == selected_vertex_idx;
+    });
+
+    if (vertex_it != polygon.end())
+    {
+      vertex_used = true;
+      break;
     }
   }
+
   if (vertex_used)
     return false;// don't try to delete a vertex used in a shape
 
@@ -443,12 +444,7 @@ bool Level::deleteSelected()
       [](const Fiducial& fiducial) { return fiducial.selected; }),
     fiducials.end());
 
-  polygons.erase(
-    std::remove_if(
-      polygons.begin(),
-      polygons.end(),
-      [](const Polygon& polygon) { return polygon.selected; }),
-    polygons.end());
+  polygons.erase(std::remove_if(polygons.begin(), polygons.end(), [](auto&& polygon) { return polygon.isSelected(); }), polygons.end());
 
   constraints.erase(
     std::remove_if(
@@ -476,20 +472,29 @@ bool Level::deleteSelected()
   {
     // See if this vertex is used in any edges/polygons.
     bool vertex_used = false;
+
     for (const auto& edge : edges)
     {
       if (edge.start_idx == selected_vertex_idx ||
         edge.end_idx == selected_vertex_idx)
         vertex_used = true;
     }
+
     for (const auto& polygon : polygons)
     {
-      for (const int& vertex_idx : polygon.vertices)
+      auto vertex_it = std::find_if(polygon.begin(), polygon.end(),
+      [selected_vertex_idx](auto&& vertex_idx)
       {
-        if (vertex_idx == selected_vertex_idx)
-          vertex_used = true;
+        return vertex_idx == selected_vertex_idx;
+      });
+
+      if (vertex_it != polygon.end())
+      {
+        vertex_used = true;
+        break;
       }
     }
+
     if (vertex_used)
       return false;// don't try to delete a vertex used in a shape
 
@@ -505,13 +510,14 @@ bool Level::deleteSelected()
         edge.end_idx--;
     }
 
-    for (Polygon& polygon : polygons)
+    for (auto&& polygon : polygons)
     {
-      for (int i = 0; i < static_cast<int>(polygon.vertices.size()); i++)
+      std::for_each(polygon.begin(), polygon.end(),
+      [selected_vertex_idx](auto& vertex_idx) mutable
       {
-        if (polygon.vertices[i] > selected_vertex_idx)
-          polygon.vertices[i]--;
-      }
+        if (vertex_idx > selected_vertex_idx)
+          vertex_idx--;
+      });
     }
   }
 
@@ -567,15 +573,12 @@ bool Level::deleteUsedEntities(int selected_vertex_idx)
         }),
       edges.end());
 
-    polygons.erase(
-      std::remove_if(
-        polygons.begin(),
-        polygons.end(),
-        [selected_vertex_idx](const Polygon& polygon)
-        {
-          return polygon.containsVertex(selected_vertex_idx);
-        }),
-      polygons.end());
+    polygons.erase(std::remove_if(polygons.begin(), polygons.end(),
+    [selected_vertex_idx](auto&& polygon)
+    {
+      return polygon.hasVertex(selected_vertex_idx);
+    }),
+    polygons.end());
 
     return true;
   }
@@ -655,11 +658,13 @@ std::optional<Edge*> Level::getEditorGeneratedEdgeByKey(const std::string& key)
 std::vector<Polygon> Level::polygonsWithVertex(int vertex_idx) const
 {
   std::vector<Polygon> result;
-  for (const auto& polygon : polygons)
+
+  std::copy_if(polygons.begin(), polygons.end(), std:back_inserter(result),
+  [vertex_idx](auto&& polygon)
   {
-    if (polygon.containsVertex(vertex_idx))
-      result.push_back(polygon);
-  }
+    return polygon.hasVertex(vertex_idx);
+  });
+
   return result;
 }
 
@@ -708,7 +713,7 @@ void Level::getSelectedItems(
 
   for (std::size_t i = 0; i < polygons.size(); i++)
   {
-    if (polygons[i].selected)
+    if (polygons[i].isSelected())
     {
       Level::SelectedItem item;
       item.polygon_idx = i;
@@ -1185,22 +1190,7 @@ void Level::drawPolygon(
   const QBrush& brush,
   const Polygon& polygon) const
 {
-  QBrush selected_brush(QColor::fromRgbF(1.0, 0.0, 0.0, 0.5));
-
-  QVector<QPointF> polygon_vertices;
-  for (const auto& vertex_idx: polygon.vertices)
-  {
-    const Vertex& v = vertices[vertex_idx];
-    polygon_vertices.append(QPointF(v.x, v.y));
-  }
-
-  QPen pen(Qt::black);
-  pen.setWidthF(0.05 / drawing_meters_per_pixel);
-
-  scene->addPolygon(
-    QPolygonF(polygon_vertices),
-    pen,
-    polygon.selected ? selected_brush : brush);
+  renderer.draw(scene, polygon);
 }
 
 void Level::drawPolygons(QGraphicsScene* scene) const
@@ -1209,18 +1199,20 @@ void Level::drawPolygons(QGraphicsScene* scene) const
   const QBrush hole_brush(QColor::fromRgbF(0.3, 0.3, 0.3, 0.5));
 
   // first draw the floor polygons
-  for (const auto& polygon : polygons)
+  std::for_each(polygons.begin(), polygons.end(),
+  [scene, this](auto&& polygon)
   {
-    if (polygon.type == Polygon::FLOOR)
+    if (polygon.type == Polygon::Type::FLOOR)
       drawPolygon(scene, floor_brush, polygon);
-  }
+  });
 
   // now draw the holes
-  for (const auto& polygon : polygons)
+  std::for_each(polygons.begin(), polygons.end(),
+  [scene, this](auto&& polygon)
   {
-    if (polygon.type == Polygon::HOLE)
+    if (polygon.type == Polygon::Type::HOLE)
       drawPolygon(scene, hole_brush, polygon);
-  }
+  });
 
 #if 0
   // ahhhhh only for debugging...
@@ -1252,7 +1244,7 @@ void Level::clearSelection()
     model.selected = false;
 
   for (auto& polygon : polygons)
-    polygon.selected = false;
+    polygon.setSelected(false);
 
   for (auto& fiducial : fiducials)
     fiducial.selected = false;
@@ -1267,14 +1259,14 @@ void Level::clearSelection()
     constraint.setSelected(false);
 }
 
-void Level::draw(
-  QGraphicsScene* scene,
-  vector<EditorModel>& editor_models,
-  const RenderingOptions& rendering_options,
-  const vector<Graph>& graphs,
-  const CoordinateSystem& coordinate_system)
+void Level::draw(QGraphicsScene* scene,
+                 vector<EditorModel>& editor_models,
+                 const RenderingOptions& rendering_options,
+                 const vector<Graph>& graphs,
+                 const CoordinateSystem& coordinate_system)
 {
   printf("Level::draw()\n");
+
   vertex_radius = 0.1;
 
   if (!coordinate_system.isGlobal())
@@ -1286,12 +1278,12 @@ void Level::draw(
     {
       const double extra_scroll_area_width = 1.0 * drawing_width;
       const double extra_scroll_area_height = 1.0 * drawing_height;
-      scene->setSceneRect(
-        QRectF(
-          -extra_scroll_area_width,
-          -extra_scroll_area_height,
-          drawing_width + 2 * extra_scroll_area_width,
-          drawing_height + 2 * extra_scroll_area_height));
+
+      scene->setSceneRect(QRectF(-extra_scroll_area_width,
+                                 -extra_scroll_area_height,
+                                 drawing_width + 2 * extra_scroll_area_width,
+                                 drawing_height + 2 * extra_scroll_area_height));
+
       scene->addPixmap(floorplan_pixmap);
     }
     else
@@ -1613,7 +1605,7 @@ Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
 {
   Polygon::EdgeDragPolygon edp;
 
-  if (polygon == nullptr || polygon->vertices.empty())
+  if (polygon == nullptr || polygon.empty())
     return edp;
 
   // cruise along all possible line segments and calculate the distance
@@ -1622,12 +1614,13 @@ Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
   int min_idx = 0;
   double min_dist = 1.0e9;
 
-  for (std::size_t v0_idx = 0; v0_idx < polygon->vertices.size(); v0_idx++)
+  size_t polygon_size = polygon->size();
+  for (std::size_t v0_idx = 0; v0_idx < polygon_size; ++v0_idx)
   {
-    const std::size_t v1_idx =
-      v0_idx < polygon->vertices.size() - 1 ? v0_idx + 1 : 0;
-    const std::size_t v0 = polygon->vertices[v0_idx];
-    const std::size_t v1 = polygon->vertices[v1_idx];
+    const std::size_t v1_idx = v0_idx < polygon_size - 1 ? v0_idx + 1
+                                                         : 0;
+    const std::size_t v0 = (*polygon)[v0_idx];
+    const std::size_t v1 = (*polygon)[v1_idx];
 
     const double x0 = vertices[v0].x;
     const double y0 = vertices[v0].y;
@@ -1635,8 +1628,7 @@ Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
     const double y1 = vertices[v1].y;
 
     double x_proj = 0, y_proj = 0;
-    const double dist = pointToLineSegmentDistance(
-      x, y, x0, y0, x1, y1, x_proj, y_proj);
+    const double dist = pointToLineSegmentDistance(x, y, x0, y0, x1, y1, x_proj, y_proj);
 
     if (dist < min_dist)
     {
@@ -1651,17 +1643,21 @@ Polygon::EdgeDragPolygon Level::polygonEdgeDragPress(
 
   // create the mouse motion polygon and insert a new edge
   QVector<QPointF> polygon_vertices;
-  for (std::size_t i = 0; i < polygon->vertices.size(); i++)
+
+  std::transform(polygon.begin(), polygon.end(), std::back_inserter(polygon_vertices),
+  [this, min_idx](auto&& vertex_idx)
   {
-    const int v_idx = polygon->vertices[i];
-    const Vertex& v = vertices[v_idx];
+    const Vertex& v = vertices[vertex_idx];
+    
     polygon_vertices.append(QPointF(v.x, v.y));
+    
     if (v_idx == min_idx)
     {
       polygon_vertices.append(QPointF(x, y));  // current mouse location
       edp.movable_vertex = i + 1;
     }
-  }
+  });
+
   edp.polygon = QPolygonF(polygon_vertices);
 
   return edp;
@@ -2325,43 +2321,48 @@ void Level::setSelectedLineItem(
   }
 }
 
-void Level::setSelectedContainingPolygon(
-  const double x,
-  const double y)
+void Level::setSelectedContainingPolygon(const double x, const double y)
 {
   // holes are "higher" in our Z-stack (to make them clickable), so first
   // we need to make a list of all polygons that contain this point.
-  vector<Polygon*> containing_polygons;
-  for (std::size_t i = 0; i < polygons.size(); i++)
+  vector<int> containing_polygons;
+  size_t polygons_size = polygons.size();
+
+  for (size_t idx = 0; idx < polygons_size; ++idx)
   {
-    Polygon& polygon = polygons[i];
     QVector<QPointF> polygon_vertices;
-    for (const auto& vertex_idx: polygon.vertices)
+    
+    std::transform(polygons[idx].begin(), polygons[idx].end(), std::back_inserter(polygon_vertices),
+    [&this](auto&& vertex_idx)  
     {
       const Vertex& v = vertices[vertex_idx];
-      polygon_vertices.append(QPointF(v.x, v.y));
-    }
+      return QPointF(v.x, v.y);
+    });
+
     QPolygonF qpolygon(polygon_vertices);
+
     if (qpolygon.containsPoint(QPoint(x, y), Qt::OddEvenFill))
-      containing_polygons.push_back(&polygons[i]);
+      containing_polygons.push_back(idx);
   }
+  
+  if (containing_polygons.empty())
+    return;
 
   // first search for holes
-  for (Polygon* p : containing_polygons)
+  auto first_poly_it = std::find_if(containing_polygons.begin(), containing_polygons.end(),
+  [this](auto&& idx)
   {
-    if (p->type == Polygon::HOLE)
-    {
-      p->selected = true;
-      return;
-    }
+    return polygons[idx].getType() == Polygon::Type::HOLE;
+  });
+
+  if (first_poly_it != containing_polygons.end)
+  {
+    polygons[*first_poly_it].setSelected(true);
+    return;
   }
 
   // if we get here, just return the first thing.
-  for (Polygon* p : containing_polygons)
-  {
-    p->selected = true;
-    return;
-  }
+  polygons[0].setSelected(true);
 }
 
 void Level::computeLayerTransforms()

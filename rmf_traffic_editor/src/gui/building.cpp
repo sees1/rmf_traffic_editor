@@ -1062,21 +1062,24 @@ void Building::draw(
   drawLifts(scene, level_idx);
 }
 
-Polygon* Building::getSelectedPolygon(const int level_idx)
+std::optional<Polygon*> Building::getSelectedPolygon(const int level_idx)
 {
-  for (std::size_t i = 0; i < levels[level_idx].polygons.size(); i++)
+  auto polygon_it = std::find_if(levels[level_idx].begin(), levels[level_idx].end(),
+  [](auto&& polygon)
   {
-    if (levels[level_idx].polygons[i].selected)
-      return &levels[level_idx].polygons[i];// abomination
-  }
-  return nullptr;
+    return polygon.isSelected();
+  });
+
+  if (polygon_it != levels[level_idx].end())
+    return std::addressof(*polygon_it);
+
+  return std::nullopt;
 }
 
-Polygon::EdgeDragPolygon Building::polygonEdgeDragPress(
-  const int level_idx,
-  const Polygon* polygon,
-  const double x,
-  const double y)
+Polygon::EdgeDragPolygon Building::polygonEdgeDragPress(const int level_idx,
+                                                        const Polygon* polygon,
+                                                        const double x,
+                                                        const double y)
 {
   Polygon::EdgeDragPolygon edp;
 
@@ -1277,32 +1280,39 @@ std::vector<int> Building::updateGraphOnLevel(
   {
     return index >= 0 && index < static_cast<int>(remap.size()) ? remap[index] : -1;
   };
+
   level.edges.erase(std::remove_if(level.edges.begin(), level.edges.end(),
-    [&](Edge& edge)
-    {
-      const auto key = Vertex::getStringParam(edge.params, "editor_generated_edge");
-      if (key && key->compare(0, prefix.size(), prefix) == 0 && !wanted_edges.count(*key))
-        return true;
-      const int start = new_index(edge.start_idx);
-      const int end = new_index(edge.end_idx);
-      if (start < 0 || end < 0)
-        return true;
-      edge.start_idx = start;
-      edge.end_idx = end;
-      return false;
-    }), level.edges.end());
+  [&](Edge& edge)
+  {
+    const auto key = Vertex::getStringParam(edge.params, "editor_generated_edge");
+    if (key && key->compare(0, prefix.size(), prefix) == 0 && !wanted_edges.count(*key))
+      return true;
+    const int start = new_index(edge.start_idx);
+    const int end = new_index(edge.end_idx);
+    if (start < 0 || end < 0)
+      return true;
+    edge.start_idx = start;
+    edge.end_idx = end;
+    return false;
+  }),
+  level.edges.end());
 
   // A polygon using a removed vertex can no longer represent its original shape.
   level.polygons.erase(std::remove_if(level.polygons.begin(), level.polygons.end(),
-    [&](Polygon& polygon)
+  [this](auto&& polygon)
+  {
+    return std::any_of(polygon.begin(), polygon.end(), [&](int index) { return new_index(index) < 0; })
+  }),
+  level.polygons.end());
+
+  for(auto&& polygon : level.polygons)
+  {
+    std::for_each(polygon.begin(), polygon.end(),
+    [](auto&& vertex_idx)
     {
-      if (std::any_of(polygon.vertices.begin(), polygon.vertices.end(),
-        [&](int index) { return new_index(index) < 0; }))
-        return true;
-      for (int& index : polygon.vertices)
-        index = new_index(index);
-      return false;
-    }), level.polygons.end());
+      vertex_idx = new_index(vertex_idx)
+    });
+  }
 
   level.vertices = std::move(retained_vertices);
   // Update door approach indices and coordinate snapshots.

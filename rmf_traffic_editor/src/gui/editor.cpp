@@ -79,7 +79,6 @@ Editor::Editor()
   layer_idx(0),
   clicked_idx(-1),
   prev_clicked_idx(-1),
-  selected_polygon(nullptr),
   scene(nullptr),
   map_view(nullptr),
   view_models_action(nullptr),
@@ -695,6 +694,7 @@ void Editor::buildingNew()
 
   if (!building.setFilename(file_info.absoluteFilePath().toStdString()))
     return;
+
   QString dir_path = file_info.dir().path();
   QDir::setCurrent(dir_path);
 
@@ -704,9 +704,7 @@ void Editor::buildingNew()
   updateTables();
 
   QSettings settings;
-  settings.setValue(
-    preferences_keys::previous_building_path,
-    QString::fromStdString(building.getFilename()));
+  settings.setValue(preferences_keys::previous_building_path, QString::fromStdString(building.getFilename()));
 }
 
 void Editor::buildingOpen()
@@ -745,18 +743,16 @@ bool Editor::buildingSave()
 {
   if (!building.save())
   {
-    QMessageBox::critical(
-      this,
-      "Unable to save",
-      "Save failed! Maybe a bad path?");
+    QMessageBox::critical(this, "Unable to save", "Save failed! Maybe a bad path?");
     return false;
   }
+
   QSettings settings;
-  settings.setValue(preferences_keys::previous_building_path,
-    QString::fromStdString(building.getFilename()));
-  statusBar()->showMessage("Saved " +
-    QString::fromStdString(building.getFilename()), 5000);
+  settings.setValue(preferences_keys::previous_building_path, QString::fromStdString(building.getFilename()));
+
+  statusBar()->showMessage("Saved " + QString::fromStdString(building.getFilename()), 5000);
   setWindowModified(false);
+
   return true;
 }
 
@@ -1233,13 +1229,16 @@ void Editor::updatePropertyEditor()
   if (building.levels.empty())
     return;
 
-  for (const auto& p : building.levels[level_idx].polygons)
+  auto poly_it = std::find_if(building.levels[level_idx].polygons.begin(), building.levels[level_idx].polygons.end(),
+  [](auto&& polygon)
   {
-    if (p.selected)
-    {
-      populatePropertyEditor(p);
-      return;
-    }
+    return polygon.isSelected();
+  });
+
+  if (poly_it != building.levels[level_idx].polygons.end())
+  {
+    populatePropertyEditor(*poly_it);
+    return;
   }
 
   for (const auto& e : building.levels[level_idx].edges)
@@ -1793,16 +1792,12 @@ void Editor::populatePropertyEditor(const Polygon& polygon)
   printf("populate_property_editor(polygon)\n");
   property_editor->blockSignals(true);  // otherwise we get tons of callbacks
 
-  property_editor->setRowCount(polygon.params.size());
+  property_editor->setRowCount(polygon.getParams().size());
 
   int row = 0;
-  for (const auto& param : polygon.params)
+  for (const auto& [name, parameter] : polygon.getParams())
   {
-    propertyEditorSetRow(
-      row,
-      QString::fromStdString(param.first),
-      param.second.toQstring(),
-      true);
+    propertyEditorSetRow(row, QString::fromStdString(name), parameter.toQstring(), true);
     row++;
   }
 
@@ -1895,13 +1890,17 @@ void Editor::propertyEditorCellChanged(int row, int column)
     return;  // stop after finding the first one
   }
 
-  for (auto& p : building.levels[level_idx].polygons)
+  auto poly_it = std::find_if(building.levels[level_idx].polygons.begin(), building.levels[level_idx].polygons.end(),m
+  [](auto&& polygon)
   {
-    if (!p.selected)
-      continue;
-    p.setParam(name, value);
+    return polygon.isSelected();
+  });
+
+  if (poly_it != building.levels[level_idx].polygons.end())
+  {
+    poly_it->setParam(name, value);
     setWindowModified(true);
-    return;  // stop after finding the first one
+    return
   }
 
   for (auto& m : building.levels[level_idx].models)
@@ -2798,18 +2797,9 @@ void Editor::mouseAddPolygon(
         return;
       if (mouse_motion_polygon_vertices.size() >= 3)
       {
-        Polygon polygon;
-        polygon.type = polygon_type;
-        polygon.createRequiredParameters();
-        for (const auto& i : mouse_motion_polygon_vertices)
-        {
-          polygon.vertices.push_back(i);
-        }
+        Polygon polygon(mouse_motion_polygon_vertices, polygon_type);
 
-        AddPolygonCommand* command = new AddPolygonCommand(
-          &building,
-          polygon,
-          level_idx);
+        AddPolygonCommand* command = new AddPolygonCommand(&building, polygon, level_idx);
 
         undo_stack.push(command);
       }
@@ -2873,7 +2863,7 @@ void Editor::mouseAddRoi(
 void Editor::mouseEditPolygon(
   const MouseType t, QMouseEvent* e, const QPointF& p)
 {
-  if (selected_polygon == nullptr)
+  if (!selected_polygon.has_value())
     return;// no polygon is selected, nothing to do
 
   if (t == MOUSE_PRESS)
@@ -2893,7 +2883,7 @@ void Editor::mouseEditPolygon(
         printf("removing vertex %d\n", ni.vertex_idx);
       }
       PolygonRemoveVertCommand* command = new PolygonRemoveVertCommand(
-        selected_polygon, ni.vertex_idx);
+        *selected_polygon, ni.vertex_idx);
       undo_stack.push(command);
       setWindowModified(true);
       createScene();
@@ -2902,7 +2892,7 @@ void Editor::mouseEditPolygon(
     {
       mouse_edge_drag_polygon = building.polygonEdgeDragPress(
         level_idx,
-        selected_polygon,
+        *selected_polygon,
         p.x(),
         p.y());
       if (mouse_edge_drag_polygon.movable_vertex < 0)
@@ -2942,14 +2932,11 @@ void Editor::mouseEditPolygon(
 
     const int release_vertex_idx = ni.vertex_idx;
 
-    if (std::find(
-        selected_polygon->vertices.begin(),
-        selected_polygon->vertices.end(),
-        release_vertex_idx) != selected_polygon->vertices.end())
+    if (std::find(selected_polygon->begin(), selected_polygon->end(), release_vertex_idx) != selected_polygon->end())
       return;// Release vertex is already in the polygon. Don't do anything.
 
     PolygonAddVertCommand* command = new PolygonAddVertCommand(
-      selected_polygon,
+      *selected_polygon,
       mouse_edge_drag_polygon.movable_vertex,
       release_vertex_idx);
 

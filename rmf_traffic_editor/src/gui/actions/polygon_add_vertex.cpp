@@ -35,12 +35,10 @@ PolygonAddVertCommand::~PolygonAddVertCommand()
 
 void PolygonAddVertCommand::undo()
 {
-  _polygon->vertices.erase(_polygon->vertices.begin() + _position);
+  _polygon->vertices.erase(_polygon->begin() + _position);
 }
 
 void PolygonAddVertCommand::redo()
 {
-  _polygon->vertices.insert(
-    _polygon->vertices.begin() + _position,
-    _vert_id);
+  _polygon->insert(_polygon->begin() + _position, _vert_id);
 }

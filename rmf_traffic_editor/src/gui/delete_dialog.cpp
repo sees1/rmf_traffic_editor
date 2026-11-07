@@ -71,21 +71,24 @@ DeleteDialog::DeleteDialog(
         " edge(s) \n";
     }
 
-    std::map<std::string, int> polygon_types;
-    for (const auto& polygon : level.polygonsWithVertex(selected_vertex_idx))
-    {
-      polygon_types[polygon.typeToString()]++;
-    }
-    for (const auto& polygon_type : polygon_types)
-    {
-      s = s + " - " + std::to_string(polygon_type.second) + " " +
-        polygon_type.first + " polygon(s) \n";
-    }
+    std::map<std::string, int> poly_type_to_count;
 
-    warning_message_vbox_layout->addWidget(new QLabel(
-        QString("This item is linked to: \n%1"
-        "Are you sure you want to delete this item?")
-        .arg(QString::fromStdString(s))));
+    std::vector<Polygon> polygons = level.polygonsWithVertex(selected_vertex_idx);
+
+    std::for_each(polygons.begin(), polygons.end(),
+    [&poly_type_to_count](auto&& polygon)
+    {
+      poly_type_to_count[polygon.typeToStr()]++;
+    });
+
+    std::for_each(poly_type_to_count.begin(), poly_type_to_count.end(),
+    [&s](auto&& type_to_count)
+    {
+      s += " - " + std::to_string(polygon_type.second) + " " + polygon_type.first + " polygon(s) \n";
+    });
+
+    warning_message_vbox_layout->addWidget(new QLabel(QString("This item is linked to: \n%1"
+                                                      "Are you sure you want to delete this item?").arg(QString::fromStdString(s))));
 
   }
 

@@ -22,7 +22,7 @@ PolygonRemoveVertCommand::PolygonRemoveVertCommand(
 {
   _polygon = polygon;
   _vert_id = vert_id;
-  _old_vertices = polygon->vertices;
+  _old_polygon = *polygon;
 }
 
 PolygonRemoveVertCommand::~PolygonRemoveVertCommand()
@@ -31,10 +31,18 @@ PolygonRemoveVertCommand::~PolygonRemoveVertCommand()
 
 void PolygonRemoveVertCommand::undo()
 {
-  _polygon->vertices = _old_vertices;
+  delete _polygon;
+  _polygon = new Polygon(std::move(_old_polygon));
 }
 
 void PolygonRemoveVertCommand::redo()
 {
-  _polygon->removeVertex(_vert_id);
+  auto vertex_it = std::find_if(_polygon->begin(), _polygon->end(),
+  [size_t needed_idx = _vert_id](auto&& vertex_idx)
+  {
+    return vertex_idx == needed_idx;
+  });
+
+  if (vertex_it != _polygon->end())
+    _polygon->erase(vertex_it);
 }

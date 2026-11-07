@@ -40,7 +40,7 @@
 class QGraphicsScene;
 
 
-class Level
+class Level final
 {
 public:
   enum ItemType {VERTEX = 1, MODEL, FIDUCIAL};
@@ -79,10 +79,7 @@ public:
 
   bool areLayerNamesUnique();
 
-  Polygon::EdgeDragPolygon polygonEdgeDragPress(
-    const Polygon* polygon,
-    const double x,
-    const double y);
+  Polygon::EdgeDragPolygon polygonEdgeDragPress(const Polygon* polygon, const double x, const double y);
 
   void addVertex(const double x, const double y);
   void addVertex(const Vertex& new_vertex);
@@ -104,22 +101,18 @@ public:
 
   void removeConstraint(const QUuid& a, const QUuid& b);
 
-  NearestItem nearestItems(
-    const double x,
-    const double y);
+  NearestItem nearestItems(const double x, const double y);
 
-  int nearestItemIndexIfWithinDistance(
-    const double x,
-    const double y,
-    const double distance_threshold,
-    const ItemType item_type);
+  int nearestItemIndexIfWithinDistance(const double x,
+                                       const double y,
+                                       const double distance_threshold,
+                                       const ItemType item_type);
 
-  void mouseSelectPress(
-    const double x,
-    const double y,
-    QGraphicsItem* graphics_item,
-    const RenderingOptions& rendering_options,
-    const Qt::KeyboardModifiers& modifiers);
+  void mouseSelectPress(const double x,
+                        const double y,
+                        QGraphicsItem* graphics_item,
+                        const RenderingOptions& rendering_options,
+                        const Qt::KeyboardModifiers& modifiers);
 
   bool canDeleteCurrentSelection();
 
@@ -141,20 +134,15 @@ public:
 
   void getSelectedItems(std::vector<SelectedItem>& selected_items);
 
-  void setSelectedLineItem(
-    QGraphicsLineItem* line_item,
-    const RenderingOptions& rendering_options);
+  void setSelectedLineItem(QGraphicsLineItem* line_item, const RenderingOptions& rendering_options);
 
-  void setSelectedContainingPolygon(
-    const double x,
-    const double y);
+  void setSelectedContainingPolygon(const double x, const double y);
 
-  void draw(
-    QGraphicsScene* scene,
-    std::vector<EditorModel>& editor_models,
-    const RenderingOptions& rendering_options,
-    const std::vector<Graph>& graphs,
-    const CoordinateSystem& coordinate_system);
+  void draw(QGraphicsScene* scene,
+            std::vector<EditorModel>& editor_models,
+            const RenderingOptions& rendering_options,
+            const std::vector<Graph>& graphs,
+            const CoordinateSystem& coordinate_system);
 
   void clearScene();
 
@@ -179,26 +167,23 @@ public:
   void alignColinear();
 
 private:
-  double pointToLineSegmentDistance(
-    const double x,
-    const double y,
-    const double x0,
-    const double y0,
-    const double x1,
-    const double y1,
-    double& x_proj,
-    double& y_proj);
+  double pointToLineSegmentDistance(const double x,
+                                    const double y,
+                                    const double x0,
+                                    const double y0,
+                                    const double x1,
+                                    const double y1,
+                                    double& x_proj,
+                                    double& y_proj);
 
-  void loadYamlEdgeSequence(
-    const YAML::Node& data,
-    const char* sequence_name,
-    const Edge::Type type);
+  void loadYamlEdgeSequence(const YAML::Node& data,
+                            const char* sequence_name,
+                            const Edge::Type type);
 
-  void drawLane(
-    QGraphicsScene* scene,
-    const Edge& edge,
-    const RenderingOptions& rendering_options,
-    const std::vector<Graph>& graphs) const;
+  void drawLane(QGraphicsScene* scene,
+                const Edge& edge,
+                const RenderingOptions& rendering_options,
+                const std::vector<Graph>& graphs) const;
 
   void drawWall(QGraphicsScene* scene, const Edge& edge) const;
 
@@ -263,6 +248,8 @@ public:
   double y_meters = 10.0;  // manually specified if no drawing supplied
 
   QPixmap floorplan_pixmap;
+
+  Renderer renderer;
 
 private:
   bool _drawing_visible = true;

@@ -37,7 +37,7 @@ public:
 private:
   Polygon* _polygon;
   int _vert_id;
-  std::vector<int> _old_vertices;
+  Polygon _old_polygon;
 };
 
 #endif

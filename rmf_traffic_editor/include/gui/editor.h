@@ -405,7 +405,7 @@ private:
   //int polygon_idx = -1;  // currently selected polygon
   QToolBar* toolbar;
   QComboBox* mode_combo_box;
-  Polygon* selected_polygon;
+  std::optional<Polygon*> selected_polygon;
   QUuid clicked_feature_id;
   QAction* view_models_action;
   QAction* view_tiles_action;
