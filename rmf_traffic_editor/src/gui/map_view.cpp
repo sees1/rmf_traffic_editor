@@ -32,7 +32,7 @@ MapView::MapView(QWidget* parent, const Building& b)
   is_panning(false),
   pan_start_x(0),
   pan_start_y(0),
-  show_tiles(false),
+  show_tiles(false)
 {
   network = new QNetworkAccessManager(this);
   connect(network, &QNetworkAccessManager::finished, this, &MapView::requestFinished);
@@ -236,7 +236,7 @@ void MapView::drawTiles()
   const double zoom_exact = log(M_PI * CoordinateSystem::wgs84_a / x_meters_per_tile) / log(2);
 
   const int MAX_ZOOM = 20;
-  int zoom = std::clamp(ceil(zoom_exact), 0, MAX_ZOOM);
+  int zoom = static_cast<int>(std::clamp(ceil(zoom_exact), 0.0, static_cast<double>(MAX_ZOOM)));
 
   const double eps = 0.0001;
   const double MAX_X = M_PI * CoordinateSystem::wgs84_a;
@@ -345,7 +345,7 @@ void MapView::renderTile(const int zoom,
                          const int tile_x,
                          const int tile_y,
                          const QPixmap& pixmap,
-                         const MapView::MapTilePixmapItem::State state)
+                         const MapTilePixmapItem::State state)
 {
   const double MAX_X = M_PI * CoordinateSystem::wgs84_a;
 
