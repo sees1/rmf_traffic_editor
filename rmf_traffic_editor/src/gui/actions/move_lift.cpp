@@ -91,7 +91,8 @@ void MoveLiftCommand::apply(const Eigen::Vector2d& position)
       
   }
 
-  building_->updateLiftGraph(lift_, reference_lvl_idx_);
+  if (reference_lvl_idx_ > 0)
+    building_->updateLifts(lift_, reference_lvl_idx_);
 }
 
 void MoveLiftCommand::undo()

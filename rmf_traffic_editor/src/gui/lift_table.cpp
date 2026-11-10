@@ -33,11 +33,24 @@ LiftTable::~LiftTable()
 void LiftTable::update(Building& building)
 {
   blockSignals(true);
-  setRowCount(1 + building.lifts.size());
 
-  for (std::size_t i = 0; i < building.lifts.size(); i++)
+  std::vector<std::shared_ptr<Lift>> dup_lifts;
+  std::for_each(building.levels.begin(), building.levels.end(),
+  [&dup_lifts](auto&& level)
   {
-    setItem(i, 0, new QTableWidgetItem(QString::fromStdString(building.lifts[i].name)));
+    auto level_lifts = level.getLifts();
+    dup_lifts.insert(dup_lifts.end(), level_lifts.begin(), level_lifts.end());
+  });
+
+  std::sort(dup_lifts.begin(), dup_lifts.end());
+  auto border_it = std::unique(dup_lifts.begin(), dup_lifts.end());
+  dup_lifts.erase(border_it, dup_lifts.end());
+
+  setRowCount(1 + dup_lifts.size());
+
+  for (std::size_t i = 0; i < dup_lifts.size(); i++)
+  {
+    setItem(i, 0, new QTableWidgetItem(QString::fromStdString(dup_lifts[i].name)));
 
     QPushButton* edit_button = new QPushButton("Edit...", this);
     setCellWidget(i, 1, edit_button); 
@@ -46,9 +59,9 @@ void LiftTable::update(Building& building)
     setCellWidget(i, 2, delete_button);
 
     connect(edit_button, &QAbstractButton::clicked,
-    [this, &building, i]()
+    [this, &dup_lifts, i]()
     {
-      LiftDialog* dialog = new LiftDialog(building.lifts[i], building);
+      LiftDialog* dialog = new LiftDialog(dup_lifts[i], building);
       dialog->show();
       dialog->raise();
       dialog->activateWindow();
@@ -61,15 +74,31 @@ void LiftTable::update(Building& building)
     });
 
     connect(delete_button, &QAbstractButton::clicked,
-    [this, &building, i]()
+    [this, &dup_lifts, i]()
     {
-      for (size_t j = 0; j < building.lifts.size(); j++)
+      for (size_t j = 0; j < dup_lifts.size(); j++)
       {
         if (j == i)
         {
-          auto lift_name = building.lifts[j].name;
-          building.purgeLiftCabinVertices(lift_name);
-          building.lifts.erase(building.lifts.begin() + i);
+          auto lift_name = dup_lifts[j].name;
+
+          for (auto&& level : levels)
+          {
+            auto remove_it = std::remove_if(level.lifts.begin(), level.lifts.end(), [lift_name](auto&& lift) { return lift.name == lift_name});
+
+            std::set<int> remove_vertices;
+            std::for_each(remove_it, lifts.end(),
+            [&remove_vertices](auto&& lift)
+            {
+              auto lift_nav_vertices = lift->getNavVerticesIdx();
+              remove_vertices.insert(remove_vertices.end(), lift_nav_vertices->begin(), lift_nav_vertices.end());
+            });
+
+            level.lifts.erase(remove_it, lift.end());
+
+            building.updateGraphOnLevel(level, remove_vertices);
+          }
+
           break;
         }
       }

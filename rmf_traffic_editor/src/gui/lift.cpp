@@ -312,33 +312,28 @@ std::vector<nlohmann::json> Lift::toJson(const std::vector<Level>& levels) const
 /// some but not all floors. It's not being used (yet).
 void Lift::draw(
   QGraphicsScene* scene,
-  const double meters_per_pixel,
-  const string& level_name,
+  const double resolution,
+  const int level_idx,
   const double elevation,
   const bool apply_transformation,
-  const double scale,
-  const double translate_x,
-  const double translate_y,
-  const double rotation) const
+  Eigen::Affine2d transform) const
 {
   if (elevation > highest_elevation || elevation < lowest_elevation)
     return;
   
   QPen cabin_pen(Qt::black);
-  cabin_pen.setWidth(0.05 / meters_per_pixel);
+  cabin_pen.setWidth(0.05 / resolution);
 
-  const double cabin_w = width / meters_per_pixel;
-  const double cabin_d = depth / meters_per_pixel;
+  const double cabin_w = width / resolution;
+  const double cabin_d = depth / resolution;
 
   QGraphicsRectItem* cabin_rect = new QGraphicsRectItem(-cabin_w / 2.0, -cabin_d / 2.0, cabin_w, cabin_d);
   cabin_rect->setPen(cabin_pen);
   
-  auto it = level_doors.find(level_name);
-  
-  if (it == level_doors.end())
-    cabin_rect->setBrush(QBrush(QColor::fromRgbF(1.0, 0.3, 0.3, 0.3)));
-  else
+  if (std::any_of(doors.begin(), doors.end(), [](auto&& door) { return door.hasOnLevel(level_idx); }))
     cabin_rect->setBrush(QBrush(QColor::fromRgbF(0.5, 1.0, 0.5, 0.5)));
+  else
+    cabin_rect->setBrush(QBrush(QColor::fromRgbF(1.0, 0.3, 0.3, 0.3)));
   
   scene->addItem(cabin_rect);
 
@@ -349,8 +344,7 @@ void Lift::draw(
   {
     QFont font("Helvetica");
     font.setPointSize(0.2 / meters_per_pixel);
-    QGraphicsSimpleTextItem* text_item = scene->addSimpleText(
-      QString::fromStdString(name), font);
+    QGraphicsSimpleTextItem* text_item = scene->addSimpleText(QString::fromStdString(name), font);
     text_item->setBrush(QColor(255, 0, 0, 255));
     text_item->setPos(-cabin_w / 3.0, 0.0);
 
@@ -359,16 +353,15 @@ void Lift::draw(
     items.append(text_item);
   }
 
-  if (it != level_doors.end())
+  for(auto&& door : doors)
   {
-    for (const LiftDoor& door : doors)
+    if (door.hasOnLevel(level_idx))
     {
-      if (find(it->second.begin(), it->second.end(), door.name) == it->second.end())
-        continue;
-
-      const double door_x = door.x / meters_per_pixel;
-      const double door_y = -door.y / meters_per_pixel;
+      const double door_x = door.pose.x() / meters_per_pixel;
+      const double door_y = -door.pose.y() / meters_per_pixel;
+    
       const double door_w = door.width / meters_per_pixel;
+
       const double door_thickness = 0.2 / meters_per_pixel;
 
       QGraphicsRectItem* door_item = new QGraphicsRectItem(-door_w / 2.0, -door_thickness / 2.0, door_w, door_thickness);
@@ -389,8 +382,7 @@ void Lift::draw(
   if (apply_transformation)
   {
     const auto displayed_pose = utils::geometry::scenePose(*this, scale, translate_x, translate_y, rotation);
-    group->setRotation(180.0 / std::acos(-1.0) * std::atan2(
-        displayed_pose.linear()(1, 0), displayed_pose.linear()(0, 0)));
+    group->setRotation(180.0 / std::acos(-1.0) * std::atan2(displayed_pose.linear()(1, 0), displayed_pose.linear()(0, 0)));
     group->setPos(displayed_pose.translation().x(), displayed_pose.translation().y());
   }
 }
@@ -419,38 +411,36 @@ bool Lift::levelDoorOpens(
   return true;
 }
 
-
-
-bool Lift::nearestItemIndexIfWithinDistance(const Eigen::Vector2d& point,
-  double threshold, double meters_per_pixel,
-  const Eigen::Isometry2d& scene_pose) const
+std::vector<Vertex> Lift::createNavVertices(int id, double resolution)
 {
-  if (meters_per_pixel <= 0.0)
-    return false;
-  const Eigen::Vector2d local = scene_pose.inverse() * point;
-  return (local - closestOnBoundary(local, meters_per_pixel)).norm() <= threshold;
+  cabin_id = id;
+
+  std::vector<Vertex> result;
+  std::for_each(doors.begin(), doors.end(),
+  [&result, &id](auto&& door)
+  {
+    Vertex vert = door.createNavVertex(++id, pose, resolution);
+
+    Eigen::Vector2d vert_pos(vert.x, vert.y);
+    Eigen::Isometry2d lift_door_pose = lift->pose * vert_pos;
+
+    vert->x = lift_door_pose.x();
+    vert->y = lift_door_pose.y();
+    vert->name += "_";
+    vert->name += name;
+  });
+
+  return result;
 }
 
-Eigen::Vector2d Lift::closestOnBoundary(const Eigen::Vector2d& p,
-  double meters_per_pixel) const
+std::vector<Edge> createNavEdges()
 {
-  const Eigen::Vector2d half_size(width / (2.0 * meters_per_pixel),
-    depth / (2.0 * meters_per_pixel));
-  const Eigen::Vector2d min = -half_size;
-  const Eigen::Vector2d max = half_size;
-  Eigen::Vector2d q = p.cwiseMax(min).cwiseMin(max);
-  if ((p.array() >= min.array()).all() && (p.array() <= max.array()).all())
+  std::vector<Edge> result;
+  std::for_each(doors.begin(), doors.end(),
+  [&result](auto&& door)
   {
-    const double distances[] = {p.x() - min.x(), max.x() - p.x(),
-      p.y() - min.y(), max.y() - p.y()};
-    const int side = std::min_element(distances, distances + 4) - distances;
-    switch (side)
-    {
-      case 0: q.x() = min.x(); break;
-      case 1: q.x() = max.x(); break;
-      case 2: q.y() = min.y(); break;
-      case 3: q.y() = max.y(); break;
-    }
-  }
-  return q;
+    result.emplace_back(cabin_id, door.door_id, Edge::LANE);
+  });
+
+  return result;
 }

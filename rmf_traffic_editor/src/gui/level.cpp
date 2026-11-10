@@ -229,10 +229,15 @@ YAML::Node Level::toYaml(const CoordinateSystem& coordinate_system) const
   for (const auto& f : fiducials)
     y["fiducials"].push_back(f.toYaml());
 
+  // TODO: do smth with cv operation with edges
   for (const auto& edge : edges)
   {
-    YAML::Node n(edge.type == Edge::DOOR ? Door(edge).toYaml()
-                                         : edge.toYaml());
+    YAML::Node n;
+    if (edge->type == Edge::DOOR)
+      n = YAML::Node(static_cast<Door*>(edge)->toYaml());
+    else
+      n = YAML::Node(edge->toYaml());
+
     std::string dict_name = "unknown";
     switch (edge.type)
     {
@@ -300,18 +305,18 @@ std::vector<nlohmann::json> Level::toJson(const CoordinateSystem& coordinate_sys
   //   json_objs.push_back(json_vertice);
   // }
 
-  for (auto& edge : edges)
+  for (auto&& edge : edges)
   {
     Json json_edge;
 
-    switch (edge.type)
+    switch (edge->type)
     {
       case Edge::LANE:
       {
-        const Vertex& start = vertices.at(edge.start_idx);
-        const Vertex& end = vertices.at(edge.end_idx);
+        const Vertex& start = vertices.at(edge->start_idx);
+        const Vertex& end = vertices.at(edge->end_idx);
 
-        json_edge = edge.toJson();
+        json_edge = edge->toJson();
         json_edge["geometry"]["elevation"] = elevation;
         json_edge["geometry"]["coordinates"] = {{start.x, start.y}, {end.x, end.y}};
         break;
@@ -322,8 +327,8 @@ std::vector<nlohmann::json> Level::toJson(const CoordinateSystem& coordinate_sys
         break;
       case Edge::DOOR:
       {
-        const Door door(edge);
-        json_edge = door.toJson();
+        std::shared_ptr<Door> door = static_cast<Door*>(edge);
+        json_edge = door->toJson();
         json_edge["geometry"]["elevation"] = elevation;
         break;
       }
@@ -370,28 +375,32 @@ bool Level::canDeleteCurrentSelection()
     }
   }
 
-  int selected_vertex_idx = -1;
-  for (int i = 0; i < static_cast<int>(vertices.size()); i++)
+  // extract vertex
+  auto selected_vertex_it = std::find_if(vertices.begin(), vertices.end(),
+  [](auto&& vertex)
   {
-    if (vertices[i].selected)
-    {
-      selected_vertex_idx = i;
-      break;  // just grab the index of the first selected vertex
-    }
-  }
+    return vertex.selected;
+  });
 
-  if (selected_vertex_idx < 0)
+  if (selected_vertex_it == vertice.end())
     return true;
+
+  size_t selected_vertex_idx = std::distance(vertices.begin(), selected_vertex_it); 
 
   bool vertex_used = false;
 
-  for (const auto& edge : edges)
+  // Check edges
+  auto selected_edge_it = std::find_if(edges.begin(), edges.end(),
+  [selected_vertex_idx](auto&& edge)
   {
-    if (edge.start_idx == selected_vertex_idx || edge.end_idx == selected_vertex_idx)
-      vertex_used = true;
-  }
+    return edge->contains(selected_vertex_idx);
+  });
 
-  for (const auto& polygon : polygons)
+  if (selected_edge_it != edges.end())
+    vertex_used = true;
+
+  // Check polygons
+  for (auto&& polygon : polygons)
   {
     auto vertex_it = std::find_if(polygon.begin(), polygon.end(),
     [selected_vertex_idx](auto&& vertex_idx)
@@ -406,52 +415,24 @@ bool Level::canDeleteCurrentSelection()
     }
   }
 
+  /// check lifts
+  if (vertices[selected_vertex_idx].params.find("lift_cabin") != v.params.end())
+    vertex_used = true;
+
   if (vertex_used)
     return false;// don't try to delete a vertex used in a shape
-
-  /// check if this is a lift_cabin waypoint
-  const auto v = vertices[selected_vertex_idx];
-  auto it = v.params.find("lift_cabin");
-  if ((it != v.params.end()))
-  {
-    printf("This waypoint is used by a lift cabin!!");
-    return false;
-  }
 
   return true;
 }
 
 bool Level::deleteSelected()
 {
-  edges.erase(
-    std::remove_if(
-      edges.begin(),
-      edges.end(),
-      [](const Edge& edge) { return edge.selected; }),
-    edges.end());
-
-  models.erase(
-    std::remove_if(
-      models.begin(),
-      models.end(),
-      [](const auto& model) { return model.selected; }),
-    models.end());
-
-  fiducials.erase(
-    std::remove_if(
-      fiducials.begin(),
-      fiducials.end(),
-      [](const Fiducial& fiducial) { return fiducial.selected; }),
-    fiducials.end());
-
+  edges.erase(std::remove_if(edges.begin(), edges.end(), [](auto&& edge) { return edge->selected; }), edges.end());
+  models.erase(std::remove_if(models.begin(), models.end(), [](auto&& model) { return model.selected; }), models.end());
+  fiducials.erase(std::remove_if(fiducials.begin(), fiducials.end(), [](auto&& fiducial) { return fiducial.selected; }), fiducials.end());
   polygons.erase(std::remove_if(polygons.begin(), polygons.end(), [](auto&& polygon) { return polygon.isSelected(); }), polygons.end());
-
-  constraints.erase(
-    std::remove_if(
-      constraints.begin(),
-      constraints.end(),
-      [](const Constraint& constraint) { return constraint.selected(); }),
-    constraints.end());
+  constraints.erase(std::remove_if(constraints.begin(), constraints.end(), [](auto&& constraint) { return constraint.selected(); }), constraints.end());
+  lifts.erase(std::remove_if(lifts.begin(), lifts.end(), [](auto&& lift) { return lift.isSelected()}));
 
   // Vertices take a lot more care, because we have to check if a vertex
   // is used in an edge or a polygon before deleting it, and update all
@@ -459,28 +440,31 @@ bool Level::deleteSelected()
   // Since this is a potentially expensive operation, first we'll spin
   // through the vertex list and see if any vertices are selected, and
   // only then make a copy of the vertex list.
-  int selected_vertex_idx = -1;
-  for (int i = 0; i < static_cast<int>(vertices.size()); i++)
+
+  // extract vertex
+  auto selected_vertex_it = std::find_if(vertices.begin(), vertices.end(),
+  [](auto&& vertex)
   {
-    if (vertices[i].selected)
-    {
-      selected_vertex_idx = i;
-      break;  // just grab the index of the first selected vertex
-    }
-  }
-  if (selected_vertex_idx >= 0)
+    return vertex.selected;
+  });
+
+  if (selected_vertex_it != vertices.end())
   {
+    size_t selected_vertex_idx = std::distance(vertices.begin(), selected_vertex_it); 
+
     // See if this vertex is used in any edges/polygons.
     bool vertex_used = false;
 
-    for (const auto& edge : edges)
+    auto selected_edge_it = std::find(edges.begin(), edges.end(),
+    [selected_vertex_idx](auto&& edge)
     {
-      if (edge.start_idx == selected_vertex_idx ||
-        edge.end_idx == selected_vertex_idx)
-        vertex_used = true;
-    }
+      return edge->contains(selected_vertex_idx);
+    });
 
-    for (const auto& polygon : polygons)
+    if (selected_edge_it != edges.end())
+      vertex_used = true;
+
+    for (auto&& polygon : polygons)
     {
       auto vertex_it = std::find_if(polygon.begin(), polygon.end(),
       [selected_vertex_idx](auto&& vertex_idx)
@@ -499,15 +483,15 @@ bool Level::deleteSelected()
       return false;// don't try to delete a vertex used in a shape
 
     // the vertex is not currently being used, so let's erase it
-    vertices.erase(vertices.begin() + selected_vertex_idx);
+    vertices.erase(vertices.begin() + selected_vertex_idx);    
 
     // now go through all edges and polygons to decrement any larger indices
-    for (Edge& edge : edges)
+    for (auto&& edge : edges)
     {
-      if (edge.start_idx > selected_vertex_idx)
-        edge.start_idx--;
-      if (edge.end_idx > selected_vertex_idx)
-        edge.end_idx--;
+      if (edge->start_idx > selected_vertex_idx)
+        edge->start_idx--;
+      if (edge->end_idx > selected_vertex_idx)
+        edge->end_idx--;
     }
 
     for (auto&& polygon : polygons)
@@ -564,14 +548,12 @@ bool Level::deleteUsedEntities(int selected_vertex_idx)
   if (selected_vertex_idx >= 0)
   {
     edges.erase(
-      std::remove_if(
-        edges.begin(),
-        edges.end(),
-        [selected_vertex_idx](const Edge& edge)
-        {
-          return edge.contains(selected_vertex_idx);
-        }),
-      edges.end());
+    std::remove_if(edges.begin(), edges.end(),
+    [selected_vertex_idx](auto&& edge)
+    {
+      return edge->contains(selected_vertex_idx);
+    }),
+    edges.end());
 
     polygons.erase(std::remove_if(polygons.begin(), polygons.end(),
     [selected_vertex_idx](auto&& polygon)
@@ -582,6 +564,7 @@ bool Level::deleteUsedEntities(int selected_vertex_idx)
 
     return true;
   }
+
   return false;
 }
 
@@ -601,57 +584,55 @@ bool Level::deleteLiftVertex(std::string lift_name)
 
   for (const auto& idx : selected_vertex_idxes)
   {
-    edges.erase(
-      std::remove_if(
-        edges.begin(),
-        edges.end(),
-        [idx](const Edge& edge)
-        {
-          if (edge.start_idx == idx ||
-          edge.end_idx == idx)
-          {
-            return true;
-          }
-          else
-            return false;
-        }),
-      edges.end());
-
-    for (Edge& edge : edges)
+    edges.erase(std::remove_if(edges.begin(), edges.end(),
+    [idx](auto&& edge)
     {
-      if (edge.start_idx > idx)
-        edge.start_idx--;
-      if (edge.end_idx > idx)
-        edge.end_idx--;
+      if (edge->start_idx == idx || edge->end_idx == idx)
+        return true;
+      
+      return false;
+    }),
+    edges.end());
+
+    for (auto&& edge : edges)
+    {
+      if (edge->start_idx > idx)
+        edge->start_idx--;
+      if (edge->end_idx > idx)
+        edge->end_idx--;
     }
     vertices.erase(vertices.begin() + idx);
   }
+
   return true;
 }
 
-std::vector<Edge> Level::edgesWithVertex(int vertex_idx) const
+std::vector<std::shared_ptr<Edge>> Level::edgesWithVertex(int vertex_idx) const
 {
-  std::vector<Edge> result;
-  for (const auto& edge : edges)
+  std::vector<std::shared_ptr<Edge>> result;
+
+  std::copy_if(edges.begin(), edges.end(), std::back_inserter(result),
+  [vertex_idx](auto&& edge)
   {
-    if (edge.contains(vertex_idx))
-      result.push_back(edge);
-  }
+    return edge->contains(vertex_idx);
+  })
+
   return result;
 }
 
-std::optional<Edge*> Level::getEditorGeneratedEdgeByKey(const std::string& key)
+std::shared_ptr<Edge> Level::getEditorGeneratedEdgeByKey(const std::string& key)
 {
   auto edge_it = std::find_if(edges.begin(), edges.end(),
   [&key](auto&& edge)
   {
-    std::optional<std::string> param_opt = Vertex::getStringParam(edge.params, "editor_generated_edge");
+    std::optional<std::string> param_opt = Vertex::getStringParam(edge->params, "editor_generated_edge");
     return param_opt.has_value() && *param_opt == key;
   });
+
   if (edge_it != edges.end())
-    return &(*edge_it);
-  else
-    return std::nullopt;
+    return *edge_it;
+  
+  return nullptr;
 }
 
 
@@ -673,7 +654,7 @@ void Level::getSelectedItems(
 {
   for (std::size_t i = 0; i < edges.size(); i++)
   {
-    if (edges[i].selected)
+    if (edges[i]->selected)
     {
       Level::SelectedItem item;
       item.edge_idx = i;
@@ -763,17 +744,16 @@ void Level::calculateScale(const CoordinateSystem& coordinate_system)
   double scale_sum = 0.0;
   int scale_count = 0;
 
-  for (auto& edge : edges)
+  for (auto&& edge : edges)
   {
-    if (edge.type == Edge::MEAS)
+    if (edge->type == Edge::MEAS)
     {
       scale_count++;
-      const double dx = vertices[edge.start_idx].x - vertices[edge.end_idx].x;
-      const double dy = vertices[edge.start_idx].y - vertices[edge.end_idx].y;
+      const double dx = vertices[edge->start_idx].x - vertices[edge->end_idx].x;
+      const double dy = vertices[edge->start_idx].y - vertices[edge->end_idx].y;
       const double distance_pixels = std::sqrt(dx*dx + dy*dy);
       // todo: a clean, strongly-typed parameter API for edges
-      const double distance_meters =
-        edge.params[std::string("distance")].value_double;
+      const double distance_meters = edge->params[std::string("distance")].value_double;
       scale_sum += distance_meters / distance_pixels;
     }
   }
@@ -1248,8 +1228,8 @@ void Level::clearSelection()
   for (auto& vertex : vertices)
     vertex.selected = false;
 
-  for (auto& edge : edges)
-    edge.selected = false;
+  for (auto&& edge : edges)
+    edge->selected = false;
 
   for (auto& model : models)
     model.selected = false;
@@ -1317,7 +1297,7 @@ void Level::draw(QGraphicsScene* scene,
       model.draw(scene, editor_models, drawing_meters_per_pixel);
   }
 
-  for (const auto& edge : edges)
+  for (auto&& edge : edges)
   {
     switch (edge.type)
     {
@@ -1344,36 +1324,29 @@ void Level::draw(QGraphicsScene* scene,
   }
 
   QFont vertex_name_font("Helvetica");
-  double vertex_name_font_size =
-    vertex_radius / drawing_meters_per_pixel * 1.5 * 10.0;
+  double vertex_name_font_size = vertex_radius / drawing_meters_per_pixel * 1.5 * 10.0;
+  
   if (vertex_name_font_size < 1.0)
     vertex_name_font_size = 1.0;
+  
   vertex_name_font.setPointSizeF(vertex_name_font_size);
 
   for (const auto& v : vertices)
-    v.draw(
-      scene,
-      vertex_radius / drawing_meters_per_pixel,
-      drawing_meters_per_pixel,
-      vertex_name_font,
-      coordinate_system);
+    v.draw(scene, vertex_radius / drawing_meters_per_pixel, drawing_meters_per_pixel, vertex_name_font, coordinate_system);
 
   for (const auto& f : fiducials)
     f.draw(scene, drawing_meters_per_pixel);
 
   Transform level_scale;
   level_scale.setScale(drawing_meters_per_pixel);
+
   for (auto& feature : floorplan_features)
-  {
-    feature.draw(
-      scene,
-      QColor::fromRgbF(0, 0, 0, 0.5),
-      level_scale,
-      drawing_meters_per_pixel);
-  }
+    feature.draw(scene, QColor::fromRgbF(0, 0, 0, 0.5), level_scale, drawing_meters_per_pixel);
 
   for (std::size_t i = 0; i < constraints.size(); i++)
     drawConstraint(scene, constraints[i], i);
+
+  drawLifts(scene);
 }
 
 void Level::clearScene()
@@ -1554,15 +1527,15 @@ void Level::loadYamlEdgeSequence(
   const YAML::Node& yl = data[sequence_name];
   for (YAML::const_iterator it = yl.begin(); it != yl.end(); ++it)
   {
-    Edge e;
+    std::shared_ptr<Edge> e = std::make_shared<Edge>();
     if (type == Edge::DOOR)
     {
-      Door door;
-      door.fromYaml(*it);
+      std::shared_ptr<Door> door = std::make_shared<Door>(*it);
       e = door;
     }
     else
-      e.fromYaml(*it, type);
+      e->fromYaml(*it, type);
+    
     edges.push_back(e);
   }
 }
@@ -2072,19 +2045,18 @@ void Level::mouseSelectPress(
   // todo: use QGraphics stuff to see if we clicked a model pixmap...
   const double model_dist_thresh = 0.5 / drawing_meters_per_pixel;
 
-  if (rendering_options.show_models &&
-    ni.model_idx >= 0 &&
-    ni.model_dist < model_dist_thresh)
+  if (rendering_options.show_models && ni.model_idx >= 0 && ni.model_dist < model_dist_thresh)
+  {
     models[ni.model_idx].selected = true;
+  }
   else if (ni.vertex_idx >= 0 && ni.vertex_dist < vertex_dist_thresh)
+  {
     vertices[ni.vertex_idx].selected = true;
+  }
   else if (ni.feature_idx >= 0 && ni.feature_dist < feature_dist_thresh)
   {
     //levels[level_idx].feature_sets[
-    printf("feature_layer_idx = %d, feature_idx = %d, feature_dist = %.3f\n",
-      ni.feature_layer_idx,
-      ni.feature_idx,
-      ni.feature_dist);
+    printf("feature_layer_idx = %d, feature_idx = %d, feature_dist = %.3f\n", ni.feature_layer_idx, ni.feature_idx, ni.feature_dist);
 
     if (ni.feature_layer_idx == 0)
     {
@@ -2097,7 +2069,9 @@ void Level::mouseSelectPress(
     }
   }
   else if (ni.fiducial_idx >= 0 && ni.fiducial_dist < 10.0)
+  {
     fiducials[ni.fiducial_idx].selected = true;
+  }
   else
   {
     // use the QGraphics stuff to see if it's an edge segment or polygon
@@ -2106,18 +2080,13 @@ void Level::mouseSelectPress(
       switch (graphics_item->type())
       {
         case QGraphicsLineItem::Type:
-          setSelectedLineItem(
-            qgraphicsitem_cast<QGraphicsLineItem*>(graphics_item),
-            rendering_options);
+          setSelectedLineItem(qgraphicsitem_cast<QGraphicsLineItem*>(graphics_item), rendering_options);
           break;
-
         case QGraphicsPolygonItem::Type:
           setSelectedContainingPolygon(x, y);
           break;
-
         default:
-          printf("clicked unhandled type: %d\n",
-            static_cast<int>(graphics_item->type()));
+          printf("clicked unhandled type: %d\n",static_cast<int>(graphics_item->type()));
           break;
       }
     }
@@ -2141,6 +2110,51 @@ Level::NearestItem Level::nearestItems(const double x, const double y)
     }
   }
 
+  for (size_t i = 0; i < lifts.size(); ++i)
+  {
+    std::shared_ptr<Lift> lift = lifts[i];
+    Transform t = getTransform(lift->reference_lvl, idx);
+
+    Eigen::Affine2d scene_pose = Eigen::Affine2d::Identitiy()
+    scene_pose.translate(Eigen::Vector2d(t.dx, t.dy));
+    scene_pose.rotate(Eigen::Rotation2Dd(t.rotation));  // угол в радианах
+    scene_pose.scale(Eigen::Vector2d(t.scale, t.scale))
+    scene_pose *= lift->pose;
+    Eigen::Isometry2d point(x, y);
+
+    Eigen::Vector2d local_point = scene_pose.inverse() * point;
+
+    const Eigen::Vector2d half_size(lift->width / (2.0 * meters_per_pixel), lift->depth / (2.0 * meters_per_pixel));
+    const Eigen::Vector2d min = -half_size;
+    const Eigen::Vector2d max = half_size;
+    Eigen::Vector2d side_coord = local_point.cwiseMax(min).cwiseMin(max);
+    if ((local_point.array() >= min.array()).all() && (local_point.array() <= max.array()).all())
+    {
+      const double distances[] = {local_point.x() - min.x(),
+                                  max.x() - local_point.x(),
+                                  local_point.y() - min.y(),
+                                  max.y() - local_point.y()};
+
+      const int side = std::min_element(distances, distances + 4) - distances;
+
+      switch (side)
+      {
+        case 0: side_coord.x() = min.x(); break;
+        case 1: side_coord.x() = max.x(); break;
+        case 2: side_coord.y() = min.y(); break;
+        case 3: side_coord.y() = max.y(); break;
+      }
+    }
+
+    const double dist = (local_point - side_coord).norm();
+
+    if (dist < ni.lift_dist)
+    {
+      ni.lift_dist = dist;
+      ni.lift_idx = lift->cabin_id;
+    }
+  }
+
   // search the floorplan features
   for (std::size_t i = 0; i < floorplan_features.size(); i++)
   {
@@ -2160,6 +2174,7 @@ Level::NearestItem Level::nearestItems(const double x, const double y)
   for (std::size_t layer_idx = 0; layer_idx < layers.size(); layer_idx++)
   {
     const Layer& layer = layers[layer_idx];
+
     for (std::size_t i = 0; i < layer.features.size(); i++)
     {
       const Feature& f = layer.features[i];
@@ -2282,16 +2297,15 @@ void Level::setSelectedLineItem(
   const double y2 = line_item->line().y2();
 
   double min_edge_dist = 1e9;
-  Edge* min_edge = nullptr;
+  std::shared_ptr<Edge> min_edge;
   // find if any of our lanes match those vertices
-  for (auto& edge : edges)
+  for (auto&& edge : edges)
   {
-    if ((edge.type == Edge::LANE) &&
-      (edge.getGraphIdx() != rendering_options.active_traffic_map_idx))
+    if ((edge->type == Edge::LANE) && (edge->getGraphIdx() != rendering_options.active_traffic_map_idx))
       continue;
 
-    const auto& v_start = vertices[edge.start_idx];
-    const auto& v_end = vertices[edge.end_idx];
+    const auto& v_start = vertices[edge->start_idx];
+    const auto& v_end = vertices[edge->end_idx];
 
     // calculate distances
     const double dx1 = v_start.x - x1;
@@ -2305,12 +2319,12 @@ void Level::setSelectedLineItem(
     if (max_dist < min_edge_dist)
     {
       min_edge_dist = max_dist;
-      min_edge = &edge;
+      min_edge = edge;
     }
   }
 
   const double thresh = 10.0;  // should be really tiny if it matches
-  if (min_edge_dist < thresh && min_edge != nullptr)
+  if (min_edge_dist < thresh && !min_edge)
   {
     min_edge->selected = true;
     return;
@@ -2475,8 +2489,8 @@ void Level::alignColinear()
 
       for (size_t j = 0; j < edges.size(); j++)
       {
-        const size_t start_idx = static_cast<size_t>(edges[j].start_idx);
-        const size_t end_idx = static_cast<size_t>(edges[j].end_idx);
+        const size_t start_idx = static_cast<size_t>(edges[j]->start_idx);
+        const size_t end_idx = static_cast<size_t>(edges[j]->end_idx);
         if (start_idx == i && vertices[end_idx].selected)
           sv.connected_vertex_indices.push_back(end_idx);
         else if (end_idx == i && vertices[start_idx].selected)
@@ -2631,4 +2645,63 @@ void Level::alignColinear()
     v.x = v1.x - t * ux;
     v.y = v1.y - t * uy;
   }
+}
+
+void Level::addLift(std::shared_ptr<Lift> lift)
+{
+  lifts.push_back(lift);
+
+  const Transform transform = getTransform(lift->reference_lvl, idx);
+
+  Eigen::Isometry2d local_pose = Eigen::Isometry2d::Identity();
+  local_pose.linear() = lift->pose.linear().transpose();
+  local_pose.translation() = transform.scale * lift->pose.translation();
+
+  Eigen::Isometry2d scene_pose = Eigen::Translation2d(transform.dx, transform.dy) * Eigen::Rotation2Dd(-transform.rotation) * local_pose;
+
+  auto nav_vertices = lift->createNavVertices(static_cast<int>(vertices.size()) - 1, drawing_meters_per_pixel);
+
+  if (nav_vertices.empty())
+    return;
+    
+  Transform transform = getTransform(lift->reference_lvl, idx);
+
+  std::for_each(nav_vertices->begin(), nav_vertices->end(),
+  [&transform](auto&& vertex)
+  {
+    Eigen::Isometry2d level_pose = Eigen::Isometry2d::Identity();
+    local_pose.linear() = Eigen::Rotation2d(0.0);
+    local_pose.translation() = transform.scale * Eigen::Vector2d(vertex.x, vertex.y);
+
+    Eigen::Isometry2d scene_pose = Eigen::Translation2d(transform.dx, transform.dy) * Eigen::Rotation2Dd(-transform.rotation) * local_pose;
+    
+    vertex.x = scene_pose.x();
+    vertex.y = scene_pose.y();
+    
+    addVertex(vertex);
+  })
+
+  auto nav_edges = lift->createNavEdges()
+
+  std::for_each(nav_edges.begin(), nav_edges.end(),
+  [&edges](auto&& edge)
+  {
+    edges.push_back(std::make_shared<Edge>(edge));
+  });
+}
+
+void Level::drawLifts(QGraphicScene* scene)
+{
+  std::for_each(lifts.begin(), lifts.end(),
+  [scene](auto&& lift)
+  {
+    Transform t = getTransform(lift->reference_lvl, idx);
+
+    Eigen::Affine2d transform = Eigen::Isometry2d::Identity();
+    transform.translate(Eigen::Vector2d(t.dx, t.dy));
+    transform.rotate(Eigen::Rotation2Dd(t.rotation));  // угол в радианах
+    transform.scale(Eigen::Vector2d(t.scale, t.scale))
+
+    lift.draw(scene, level.drawing_meters_per_pixel, idx, level.elevation, true, transform);
+  });
 }

@@ -41,29 +41,13 @@ AddEdgeCommand::~AddEdgeCommand()
 void AddEdgeCommand::redo()
 {
   building_->levels[level_idx_].vertices = final_snapshot_;
+
   if (type_ == Edge::LANE)
-  {
-    building_->addLane(
-      level_idx_,
-      vert_id_first_,
-      vert_id_second_,
-      rendering_options_.active_traffic_map_idx);
-  }
+    building_->addLane(level_idx_, rendering_options_.active_traffic_map_idx, std::make_shared<Edge>(vert_id_first_, vert_id_second_));
   else if (type_ == Edge::DOOR)
-  {
-    building_->addDoor(
-      level_idx_,
-      vert_id_first_,
-      vert_id_second_);
-  }
+    building_->addDoor(level_idx_, std::make_shared<Door>(vert_id_first_, vert_id_second_));
   else
-  {
-    building_->addEdge(
-      level_idx_,
-      vert_id_first_,
-      vert_id_second_,
-      type_);
-  }
+    building_->addEdge(level_idx_, std::make_shared<Edge>(vert_id_first_, vert_id_second_, type_));
 }
 
 void AddEdgeCommand::undo()

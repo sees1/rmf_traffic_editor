@@ -148,9 +148,9 @@ bool Building::load(const string& _filename)
     const YAML::Node& y_lifts = y["lifts"];
     for (YAML::const_iterator it = y_lifts.begin(); it != y_lifts.end(); ++it)
     {
-      Lift lift;
-      lift.fromYaml(it->first.as<string>(), it->second, levels);
-      lifts.push_back(lift);
+      std::shared_ptr<Lift> lift = std::make_shared<Lift>();
+      lift->fromYaml(it->first.as<string>(), it->second, levels);
+      addLift(lift);
     }
   }
 
@@ -200,10 +200,22 @@ bool Building::save()
   for (const auto& level : levels)
     y["levels"][level.name] = level.toYaml(coordinate_system);
 
+  std::vector<std::shared_ptr<Lift>> dup_lifts;
+  std::for_each(levels.begin(), levels.end(),
+  [&dup_lifts](auto&& level)
+  {
+    auto level_lifts = level.getLifts();
+    dup_lifts.insert(dup_lifts.end(), level_lifts.begin(), level_lifts.end());
+  });
+
+  std::sort(dup_lifts.begin(), dup_lifts.end());
+  auto border_it = std::unique(dup_lifts.begin(), dup_lifts.end());
+  dup_lifts.erase(border_it, dup_lifts.end());
+
   y["lifts"] = YAML::Node(YAML::NodeType::Map);
-  for (const auto& lift : lifts)
+  for (const auto& lift : dup_lifts)
     y["lifts"][lift.name] = lift.toYaml();
-  if (lifts.empty())
+  if (dup_lifts.empty())
     y["lifts"].SetStyle(YAML::EmitterStyle::Flow);
 
   if (crowd_sim_impl)
@@ -252,7 +264,19 @@ bool Building::exportNavigation(const std::string& path) const
       for (const auto& feature : level.toJson(coordinate_system))
         json["features"].push_back(feature);
 
-    for (const auto& lift : lifts)
+    std::vector<std::shared_ptr<Lift>> dup_lifts;
+    std::for_each(levels.begin(), levels.end(),
+    [&dup_lifts](auto&& level)
+    {
+      auto level_lifts = level.getLifts();
+      dup_lifts.insert(dup_lifts.end(), level_lifts.begin(), level_lifts.end());
+    });
+
+    std::sort(dup_lifts.begin(), dup_lifts.end());
+    auto border_it = std::unique(dup_lifts.begin(), dup_lifts.end());
+    dup_lifts.erase(border_it, dup_lifts.end());
+
+    for (const auto& lift : dup_lifts)
       for (const auto& feature : lift.toJson(levels))
         json["features"].push_back(feature);
     
@@ -273,9 +297,7 @@ bool Building::exportNavigation(const std::string& path) const
   }
 }
 
-bool Building::exportFeatures(
-  int level_index,
-  const std::string& dest_filename) const
+bool Building::exportFeatures(int level_index, const std::string& dest_filename) const
 {
   return levels[level_index].exportFeatures(dest_filename);
 }
@@ -284,6 +306,7 @@ void Building::addVertex(int level_index, double x, double y)
 {
   if (level_index >= static_cast<int>(levels.size()))
     return;
+  
   levels[level_index].addVertex(x, y);
 }
 
@@ -291,25 +314,21 @@ QUuid Building::addFiducial(int level_index, double x, double y)
 {
   if (level_index >= static_cast<int>(levels.size()))
     return NULL;
+
   levels[level_index].fiducials.push_back(Fiducial(x, y));
+
   return levels[level_index].fiducials.rbegin()->uuid;
 }
 
-QUuid Building::addFeature(
-  int level_idx,
-  int layer_idx,
-  double x,
-  double y)
+QUuid Building::addFeature(int level_idx, int layer_idx, double x, double y)
 {
   if (level_idx >= static_cast<int>(levels.size()))
     return NULL;
+
   return levels[level_idx].addFeature(layer_idx, x, y);
 }
 
-void Building::removeFeature(
-  const int level_idx,
-  const int layer_idx,
-  QUuid feature_uuid)
+void Building::removeFeature(const int level_idx, const int layer_idx, QUuid feature_uuid)
 {
   if (level_idx >= static_cast<int>(levels.size()))
     return;
@@ -317,11 +336,7 @@ void Building::removeFeature(
   levels[level_idx].removeFeature(layer_idx, feature_uuid);
 }
 
-int Building::findNearestVertexIndex(
-  int level_index,
-  double x,
-  double y,
-  double& distance)
+int Building::findNearestVertexIndex(int level_index, double x, double y, double& distance)
 {
   double min_dist = 1e100;
   int min_index = -1;
@@ -341,294 +356,159 @@ int Building::findNearestVertexIndex(
   return min_index;  // will be -1 if vertices vector is empty
 }
 
-void Building::addEdge(
-  const int level_index,
-  const int start_vertex_index,
-  const int end_vertex_index,
-  const Edge::Type edge_type)
+void Building::addEdge(const int level_index, std::shared_ptr<Edge> edge)
 {
   if (level_index >= static_cast<int>(levels.size()))
     return;
 
-  if (edge_type == Edge::DOOR)
-  {
-    addDoor(level_index, start_vertex_index, end_vertex_index);
-    return;
-  }
-
   printf("Building::add_edge(%d, %d, %d, %d)\n",
     level_index,
-    start_vertex_index,
-    end_vertex_index,
-    static_cast<int>(edge_type));
+    edge->start_idx,
+    edge->end_idx,
+    static_cast<int>(edge->type));
 
-  levels[level_index].edges.push_back(
-    Edge(start_vertex_index, end_vertex_index, edge_type));
+  levels[level_index].edges.push_back(edge);
 }
 
-void Building::addDoor(const int level_idx, const int start_idx, const int end_idx)
+void Building::addDoor(const int level_index, std::shared_ptr<Door> door)
 {
-  if (level_idx < 0 || level_idx >= static_cast<int>(levels.size()))
+  if (level_index < 0 || level_index >= static_cast<int>(levels.size()))
     return;
 
-  auto& level = levels[level_idx];
+  auto& level = levels[level_index];
 
-  if (start_idx < 0 || end_idx < 0 ||
-      start_idx >= static_cast<int>(level.vertices.size()) ||
-      end_idx >= static_cast<int>(level.vertices.size()))
+  size_t start_idx = door->getStartIdx();
+  size_t end_idx = door->getEndIdx();
+
+  if (start_idx >= static_cast<int>(level.vertices.size()) || end_idx >= static_cast<int>(level.vertices.size()))
+    return;
+  
+  auto nav_vertices_opt = door->getNavVertices(level);
+  if (!nav_vertices_opt.has_value())
     return;
 
-  const double meters_per_pixel = level.drawing_meters_per_pixel;
-
-  if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0)
-    return;
-
-  const auto& start = level.vertices[start_idx];
-  const auto& end = level.vertices[end_idx];
-  const Eigen::Vector2d direction(end.x - start.x, end.y - start.y);
-  if (direction.norm() < 1e-9)
-    return;
-
-  const Eigen::Vector2d center((start.x + end.x) / 2, (start.y + end.y) / 2);
-  const Eigen::Vector2d normal(-direction.y() / direction.norm(), direction.x() / direction.norm());
-
-  const std::string id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
-  const std::string key = "door/" + id;
-
-  Door door(Edge(start_idx, end_idx, Edge::DOOR));
-  door.params["editor_door_id"] = Param(id);
-
-  const std::string name = door.params.at("name").value_string;
-
-  const Eigen::Vector2d front_position = center + 0.5 / meters_per_pixel * normal;
-  Vertex front_vertex(front_position.x(), front_position.y(), name + "_front");
+  std::for_each(nav_vertices->begin(), nav_vertices->end(),
+  [&level](auto&& vertex)
+  {
+    level.addVertex(vertex);
+  })
   
-  front_vertex.params["editor_generated_vertex"] = Param(key + "/front");
-  front_vertex.params["door_name"] = Param(name);
-  front_vertex.params["door_side"] = Param(std::string("front"));
-  
-  level.addVertex(front_vertex);
-  
-  const int front = static_cast<int>(level.vertices.size()) - 1;
-
-  const Eigen::Vector2d back_position = center - 0.5 / meters_per_pixel * normal;
-  
-  Vertex back_vertex(back_position.x(), back_position.y(), name + "_back");
-  
-  back_vertex.params["editor_generated_vertex"] = Param(key + "/back");
-  back_vertex.params["door_name"] = Param(name);
-  back_vertex.params["door_side"] = Param(std::string("back"));
-  
-  level.addVertex(back_vertex);
-  
-  const int back = static_cast<int>(level.vertices.size()) - 1;
-
-  door.setApproachVertices(front, back);
-  door.setApproachPositions(front_position, back_position);
   level.edges.push_back(door);
 
-  Edge lane(front, back, Edge::LANE);
-  lane.params["editor_generated_edge"] = Param(key);
-  lane.params["door_name"] = Param(name);
-  level.edges.push_back(lane);
+  auto nav_edge = door->getNavEdge();
+  if (!nav_edge)
+    return;
+
+  level.edges.push_back(nav_edge);
+}
+
+void Building::addLift(std::shared_ptr<Lift> lift)
+{
+  if (lift->reference_lvl < 0 || lift->reference_lvl >= static_cast<int>(levels.size()))
+    return;
+
+  const std::string lift_key = "lift/" + std::to_string(lift->name.size()) + ":" + lift->name;
+
+  for (std::size_t level_idx = 0; level_idx < levels.size(); ++level_idx)
+  {
+    auto& level = levels[level_idx];
+
+    auto level_doors_it = lift->level_doors.find(level.name);
+
+    // lift doesn't have doors at current level
+    if (level_doors_it == lift->level_doors.end() || level_doors_it->second.empty())
+      continue;
+
+    // lift doesn't stop at current level
+    if (lift->lowest_elevation < level.elevation && lift->highest_elevation > level.elevation)
+      continue;
+
+    level.addLift(lift);
+  }
 }
 
 void Building::moveVertex(const int level_idx, const int vertex_idx, double x, double y)
 {
   if (level_idx < 0 || level_idx >= static_cast<int>(levels.size()))
     return;
+  
   auto& level = levels[level_idx];
+
   if (vertex_idx < 0 || vertex_idx >= static_cast<int>(level.vertices.size()))
     return;
 
   level.vertices[vertex_idx].x = x;
   level.vertices[vertex_idx].y = y;
 
-  for (auto& edge : level.edges)
+  std::vector<std::shared_ptr<Edge>> contain_edges;
+  std::copy_if(level.edges.begin(), level.edges.end(), std::back_inserter(contain_edges),
+  [vertex_idx](auto&& edge)
   {
-    if (edge.type != Edge::DOOR)
-      continue;
-    Door door(edge);
-    const int front = door.frontVertex();
-    const int back = door.backVertex();
-    if (!edge.contains(vertex_idx) && front != vertex_idx && back != vertex_idx)
-      continue;
-    if (front < 0 || back < 0 || front >= static_cast<int>(level.vertices.size()) ||
-      back >= static_cast<int>(level.vertices.size()))
-      continue;
+    return edge.contains(vertex_idx);
+  });
 
-    if (edge.contains(vertex_idx))
+  if (contain_edges.empty())
+    return;
+
+  std::vector<std::shared_ptr<Edge>> door_edges;
+  std::copy_if(contain_edges.begin(), contain_edges.end(), std::back_inserter(door_edges),
+  [](auto&& edge)
+  {
+    return edge.type == Edge::DOOR;
+  });
+  
+  if (!door_edges.empty())
+  {
+    for(auto&& edge : door_edges)
     {
-      if (edge.start_idx < 0 || edge.end_idx < 0 ||
-        edge.start_idx >= static_cast<int>(level.vertices.size()) ||
-        edge.end_idx >= static_cast<int>(level.vertices.size()))
-        continue;
-      const double meters_per_pixel = level.drawing_meters_per_pixel;
-      if (!std::isfinite(meters_per_pixel) || meters_per_pixel <= 0)
-        continue;
-      const auto& start = level.vertices[edge.start_idx];
-      const auto& end = level.vertices[edge.end_idx];
-      const Eigen::Vector2d direction(end.x - start.x, end.y - start.y);
-      if (direction.norm() < 1e-9)
-        continue;
-      const Eigen::Vector2d center((start.x + end.x) / 2, (start.y + end.y) / 2);
-      const Eigen::Vector2d normal(-direction.y() / direction.norm(), direction.x() / direction.norm());
+      Door* door = static_cast<Door*>(edge);
 
-      const Eigen::Vector2d front_position = center + 0.5 / meters_per_pixel * normal;
-      level.vertices[front].x = front_position.x();
-      level.vertices[front].y = front_position.y();
+      if (door->frontVertexIdx() >= static_cast<int>(level.vertices.size()) ||
+          door->backVertexIdx() >= static_cast<int>(level.vertices.size()))
+        continue;
 
-      const Eigen::Vector2d back_position = center - 0.5 / meters_per_pixel * normal;
-      level.vertices[back].x = back_position.x();
-      level.vertices[back].y = back_position.y();
+      auto nav_vertices_opt = door->getNavVertices(level);
+      if (!nav_vertices_opt.has_value())
+        return;
+
+      level.vertices[door->frontVertexIdx()].x = (*nav_vertices_opt)[0].x();
+      level.vertices[door->frontVertexIdx()].y = (*nav_vertices_opt)[0].y();
+      level.vertices[door->backVertexIdx()].x = (*nav_vertices_opt)[1].x();
+      level.vertices[door->backVertexIdx()].y = (*nav_vertices_opt)[1].y();
     }
-
-    const auto& front_vertex = level.vertices[front];
-    const auto& back_vertex = level.vertices[back];
-    door.setApproachPositions(Eigen::Vector2d(front_vertex.x, front_vertex.y),
-      Eigen::Vector2d(back_vertex.x, back_vertex.y));
-    edge = door;
   }
 }
 
-void Building::addLane(
-  const int level_index,
-  const int start_vertex_index,
-  const int end_vertex_index,
-  const int graph_idx)
+void Building::addLane(const int level_index, const int graph_idx, std::shared_ptr<Edge> edge)
 {
   if (level_index >= static_cast<int>(levels.size()))
     return;
 
   printf("Building::add_lane(%d, %d, %d, graph=%d)\n",
-    level_index,
-    start_vertex_index,
-    end_vertex_index,
-    graph_idx);
-  Edge e(start_vertex_index, end_vertex_index, Edge::LANE);
-  e.setGraphIdx(graph_idx);
-  levels[level_index].edges.push_back(e);
+          level_index,
+          start_vertex_index,
+          end_vertex_index,
+          graph_idx);
+
+  edge->setGraphIdx(graph_idx);
+
+  levels[level_index].edges.push_back(edge);
 }
 
-bool Building::deleteSelected(const int level_index, bool delete_used_entities)
+bool Building::deleteSelected(const int level_index)
 {
   if (level_index < 0 || level_index >= static_cast<int>(levels.size()))
     return false;
 
   auto& level = levels[level_index];
+
   const Level before = level;
-  if (delete_used_entities)
-  {
-    const auto selected = std::find_if(level.vertices.begin(), level.vertices.end(),
-      [](const Vertex& vertex) { return vertex.selected; });
-    if (selected != level.vertices.end())
-    {
-      const auto cabin = Vertex::getStringParam(selected->params, "lift_cabin");
-      if (cabin)
-      {
-        purgeLiftCabinVertices(*cabin);
-        return true;
-      }
-      level.deleteUsedEntities(std::distance(level.vertices.begin(), selected));
-    }
-  }
   if (!level.deleteSelected())
   {
     level = before;
     return false;
   }
 
-  // Level has already remapped edge endpoints and polygons. Update the
-  // navigation references using vertex identity before compacting further.
-  std::map<QUuid, int> vertex_indices;
-  for (std::size_t i = 0; i < level.vertices.size(); ++i)
-    vertex_indices.emplace(level.vertices[i].uuid, static_cast<int>(i));
-  std::vector<int> remap(before.vertices.size(), -1);
-  for (std::size_t i = 0; i < before.vertices.size(); ++i)
-  {
-    const auto it = vertex_indices.find(before.vertices[i].uuid);
-    if (it != vertex_indices.end())
-      remap[i] = it->second;
-  }
-  // Update door approach indices and coordinate snapshots.
-  for (auto& edge : level.edges)
-  {
-    if (edge.type != Edge::DOOR)
-      continue;
-
-    Door door(edge);
-    const int old_front = door.frontVertex();
-    const int old_back = door.backVertex();
-    const int front = old_front >= 0 && old_front < static_cast<int>(remap.size())
-      ? remap[old_front] : -1;
-    const int back = old_back >= 0 && old_back < static_cast<int>(remap.size())
-      ? remap[old_back] : -1;
-
-    door.setApproachVertices(front, back);
-    if (front >= 0 && back >= 0)
-    {
-      const auto& front_vertex = level.vertices[front];
-      const auto& back_vertex = level.vertices[back];
-      door.setApproachPositions(
-        Eigen::Vector2d(front_vertex.x, front_vertex.y),
-        Eigen::Vector2d(back_vertex.x, back_vertex.y));
-    }
-    edge = door;
-  }
-
-  // Update lift cabin and door references on this level.
-  for (auto& lift : lifts)
-  {
-    const auto navigation_it = lift.navigation_vertices.find(level.name);
-    if (navigation_it == lift.navigation_vertices.end())
-      continue;
-
-    auto& navigation = navigation_it->second;
-    const int old_cabin = navigation.cabin;
-    navigation.cabin = old_cabin >= 0 && old_cabin < static_cast<int>(remap.size())
-      ? remap[old_cabin] : -1;
-    navigation.cabin_position.reset();
-    navigation.door_positions.clear();
-    if (navigation.cabin < 0)
-    {
-      lift.navigation_vertices.erase(navigation_it);
-      continue;
-    }
-
-    const auto& cabin_vertex = level.vertices[navigation.cabin];
-    navigation.cabin_position = Eigen::Vector2d(cabin_vertex.x, cabin_vertex.y);
-    for (auto door_it = navigation.doors.begin(); door_it != navigation.doors.end();)
-    {
-      const int old_door = door_it->second;
-      door_it->second = old_door >= 0 && old_door < static_cast<int>(remap.size())
-        ? remap[old_door] : -1;
-      if (door_it->second < 0)
-        door_it = navigation.doors.erase(door_it);
-      else
-      {
-        const auto& door_vertex = level.vertices[door_it->second];
-        navigation.door_positions[door_it->first] = Eigen::Vector2d(door_vertex.x, door_vertex.y);
-        ++door_it;
-      }
-    }
-    if (navigation.doors.empty())
-      lift.navigation_vertices.erase(navigation_it);
-  }
-
-  std::set<std::string> wanted_vertices;
-  std::set<std::string> wanted_edges;
-  for (const auto& edge : level.edges)
-  {
-    if (edge.type != Edge::DOOR)
-      continue;
-    const auto id = Vertex::getStringParam(edge.params, "editor_door_id");
-    if (!id)
-      continue;
-    const std::string key = "door/" + *id;
-    wanted_vertices.insert(key + "/front");
-    wanted_vertices.insert(key + "/back");
-    wanted_edges.insert(key);
-  }
   updateGraphOnLevel(level, "door/", wanted_vertices, wanted_edges);
   return true;
 }
@@ -689,39 +569,6 @@ void Building::addLevel(const Level& new_level)
       return;
   }
   levels.push_back(new_level);
-}
-
-void Building::drawLifts(QGraphicsScene* scene, const int level_idx)
-{
-  const Level& level = levels[level_idx];
-  for (const auto& lift : lifts)
-  {
-    // find the level index referenced by the lift
-    int reference_floor_idx = -1;
-    for (std::size_t i = 0; i < levels.size(); i++)
-    {
-      if (levels[i].name == lift.reference_floor_name)
-      {
-        reference_floor_idx = static_cast<int>(i);
-        break;
-      }
-    }
-
-    Transform t;
-    if (reference_floor_idx >= 0)
-      t = getTransform(reference_floor_idx, level_idx);
-
-    lift.draw(
-      scene,
-      level.drawing_meters_per_pixel,
-      level.name,
-      level.elevation,
-      true,
-      t.scale,
-      t.dx,
-      t.dy,
-      t.rotation);
-  }
 }
 
 bool Building::transformBetweenLevels(
@@ -1040,11 +887,10 @@ void Building::getSelectedItems(
   levels[level_idx].getSelectedItems(selected);
 }
 
-void Building::draw(
-  QGraphicsScene* scene,
-  const int level_idx,
-  std::vector<EditorModel>& editor_models,
-  const RenderingOptions& rendering_options)
+void Building::draw(QGraphicsScene* scene,
+                    const int level_idx,
+                    std::vector<EditorModel>& editor_models,
+                    const RenderingOptions& rendering_options)
 {
   if (levels.empty())
   {
@@ -1052,14 +898,7 @@ void Building::draw(
     return;
   }
 
-  levels[level_idx].draw(
-    scene,
-    editor_models,
-    rendering_options,
-    graphs,
-    coordinate_system);
-
-  drawLifts(scene, level_idx);
+  levels[level_idx].draw(scene, editor_models, rendering_options, graphs, coordinate_system);
 }
 
 std::optional<Polygon*> Building::getSelectedPolygon(const int level_idx)
@@ -1090,34 +929,6 @@ EdgeDragPolygon Building::polygonEdgeDragPress(const int level_idx,
     return edp;
 
   return levels[level_idx].polygonEdgeDragPress(polygon, x, y);
-}
-
-Lift Building::getLift(const std::string& name) const
-{
-  for (const auto& lift : lifts)
-  {
-    if (lift.name == name)
-      return lift;
-  }
-  return Lift();
-}
-
-void Building::purgeLiftCabinVertices(std::string lift_name)
-{
-  const std::string prefix = "lift/" + std::to_string(lift_name.size()) + ":" + lift_name + "/";
-  for (auto& level : levels)
-  {
-    std::set<int> removed_vertices;
-    for (std::size_t i = 0; i < level.vertices.size(); ++i)
-    {
-      const auto& vertex = level.vertices[i];
-      const auto cabin = Vertex::getStringParam(vertex.params, "lift_cabin");
-      const auto owner = Vertex::getStringParam(vertex.params, "lift_name");
-      if ((cabin && *cabin == lift_name) || (owner && *owner == lift_name))
-        removed_vertices.insert(static_cast<int>(i));
-    }
-    updateGraphOnLevel(level, prefix, {}, {}, removed_vertices);
-  }
 }
 
 void Building::addConstraint(
@@ -1157,11 +968,8 @@ int Building::nearestItemIndexIfWithinDistance(
     item_type);
 }
 
-void Building::updateLiftGraph(Lift* lift, int reference_lvl)
+void Building::updateLifts(Lift* lift, int reference_lvl)
 {
-  if (!lift || reference_lvl < 0 || reference_lvl >= static_cast<int>(levels.size()))
-    return;
-
   lift->navigation_vertices.clear();
 
   const std::string lift_key = "lift/" + std::to_string(lift->name.size()) + ":" + lift->name;
@@ -1264,19 +1072,17 @@ std::vector<int> Building::updateGraphOnLevel(
   const std::set<int>& removed_vertices)
 {
   std::vector<int> remap(level.vertices.size(), -1);
-  std::set<std::string> seen;
+
   std::vector<Vertex> retained_vertices;
   retained_vertices.reserve(level.vertices.size());
+
   for (std::size_t i = 0; i < level.vertices.size(); ++i)
   {
-    const auto& vertex = level.vertices[i];
-    const auto key = Vertex::getStringParam(vertex.params, "editor_generated_vertex");
-    if (removed_vertices.count(static_cast<int>(i)) ||
-      (key && key->compare(0, prefix.size(), prefix) == 0 &&
-      (!wanted_vertices.count(*key) || !seen.insert(*key).second)))
+    if (removed_vertices.count(static_cast<int>(i)))
       continue;
+
     remap[i] = static_cast<int>(retained_vertices.size());
-    retained_vertices.push_back(vertex);
+    retained_vertices.push_back(level.vertices[i]);
   }
 
   const auto new_index = [&](int index)
@@ -1287,16 +1093,10 @@ std::vector<int> Building::updateGraphOnLevel(
   level.edges.erase(std::remove_if(level.edges.begin(), level.edges.end(),
   [&](Edge& edge)
   {
-    const auto key = Vertex::getStringParam(edge.params, "editor_generated_edge");
-    if (key && key->compare(0, prefix.size(), prefix) == 0 && !wanted_edges.count(*key))
-      return true;
     const int start = new_index(edge.start_idx);
     const int end = new_index(edge.end_idx);
     if (start < 0 || end < 0)
       return true;
-    edge.start_idx = start;
-    edge.end_idx = end;
-    return false;
   }),
   level.edges.end());
 
@@ -1307,6 +1107,13 @@ std::vector<int> Building::updateGraphOnLevel(
     return std::any_of(polygon.begin(), polygon.end(), [&](int index) { return new_index(index) < 0; });
   }),
   level.polygons.end());
+
+  std::for_each(level.edges.begin(), level.edges.end(),
+  [](auto&& edge)
+  {
+    edge.start_idx = new_index(edge.start_idx);
+    edge.end_idx = new_index(edge.end_idx);
+  });
 
   for(auto&& polygon : level.polygons)
   {
@@ -1353,8 +1160,7 @@ std::vector<int> Building::updateGraphOnLevel(
 
     auto& navigation = navigation_it->second;
     const int old_cabin = navigation.cabin;
-    navigation.cabin = old_cabin >= 0 && old_cabin < static_cast<int>(remap.size())
-      ? remap[old_cabin] : -1;
+    navigation.cabin = old_cabin >= 0 && old_cabin < static_cast<int>(remap.size()) ? remap[old_cabin] : -1;
     navigation.cabin_position.reset();
     navigation.door_positions.clear();
     if (navigation.cabin < 0)

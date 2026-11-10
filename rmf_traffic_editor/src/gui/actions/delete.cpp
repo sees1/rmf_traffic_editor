@@ -18,8 +18,10 @@
 #include "delete.h"
 
 DeleteCommand::DeleteCommand(Building* building, int level_idx, bool delete_used_entities)
-: _before(building->levels), delete_used_entities_(delete_used_entities),
-  _building(building), _level_idx(level_idx)
+: _before(building->levels),
+  delete_used_entities_(delete_used_entities),
+  _building(building),
+  _level_idx(level_idx)
 {
   for (const auto& lift : building->lifts)
     navigation_before_.emplace(lift.name, lift.navigation_vertices);
@@ -53,7 +55,9 @@ void DeleteCommand::redo()
   else
   {
     _building->deleteSelected(_level_idx, delete_used_entities_);
+  
     _after = _building->levels;
+  
     for (const auto& lift : _building->lifts)
       navigation_after_.emplace(lift.name, lift.navigation_vertices);
     _applied = true;

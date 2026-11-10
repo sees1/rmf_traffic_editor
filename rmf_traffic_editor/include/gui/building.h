@@ -82,7 +82,7 @@ public:
   bool save();
   bool exportNavigation(const std::string& path) const;
 
-  void updateLiftGraph(Lift* lift, int reference_lvl);
+  void updateLifts(Lift* lift, int reference_lvl);
   
   // Compact the shared graph and remap every object's references on this level.
   std::vector<int> updateGraphOnLevel(Level& level,
@@ -126,22 +126,10 @@ public:
   int findNearestVertexIndex(
     int level_index, double x, double y, double& distance);
 
-  void addEdge(
-    const int level_idx,
-    const int start_idx,
-    const int end_idx,
-    const Edge::Type edge_type);
-
-  void addDoor(
-    const int level_idx,
-    const int start_idx,
-    const int end_idx);
-
-  void addLane(
-    const int level_idx,
-    const int start_idx,
-    const int end_idx,
-    const int graph_idx);
+  void addEdge(const int level_idx, std::shared_ptr<Edge> edge);
+  void addDoor(const int level_idx, std::shared_ptr<Door> door);
+  void addLane(const int level_idx, const int graph_idx, std::shared_ptr<Edge> edge);
+  void addLift(std::shared_ptr<Lift> lift);
 
   QUuid addModel(
     const int level_idx,
@@ -151,14 +139,12 @@ public:
     const double yaw,
     const std::string& model_name);
 
-  bool deleteSelected(const int level_index, bool delete_used_entities = false);
+  bool deleteSelected(const int level_index);
 
   void setModelYaw(
     const int level_idx,
     const int model_idx,
     const double yaw);
-
-  void drawLifts(QGraphicsScene* scene, const int level_idx);
 
   bool transformBetweenLevels(
     const std::string& from_level_name,
@@ -178,9 +164,7 @@ public:
     const int from_level_idx,
     const int to_level_idx);
 
-  Transform getTransform(
-    const int from_level_idx,
-    const int to_level_idx);
+  Transform getTransform(const int from_level_idx, const int to_level_idx);
 
   void calculateAllTransforms();
 
@@ -192,8 +176,7 @@ public:
 
   void rotateAllModels(const double rotation);
 
-  void getSelectedItems(const int level_idx,
-    std::vector<Level::SelectedItem>& selected);
+  void getSelectedItems(const int level_idx, std::vector<Level::SelectedItem>& selected);
 
   void draw(
     QGraphicsScene* scene,
@@ -218,8 +201,6 @@ public:
     const double y);
 
   Lift getLift(const std::string& name) const;
-
-  void purgeLiftCabinVertices(std::string lift_name);
 
 public:
   std::string name;

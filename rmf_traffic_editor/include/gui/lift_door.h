@@ -44,6 +44,8 @@ public:
                              std::size_t lift_cabin_vertex_id,
                              double resolution_meter_per_pixel);
 
+  bool hasOnLevel(int level_idx) { return has_door.at(level_idx) == 1; }
+
 public:
   YAML::Node toYaml() const;
 
@@ -51,11 +53,16 @@ public:
 
 public:
   std::string name;
-  std::size_t door_id;
+  
+  int door_id;
+
+  std::vector<size_t> has_door;
+
+  Eigen::Vector2d pose {0.0, 0.5};
+  
   double door_offset = 0.5;
-  double x = 0.0;  // center of door, relative to the cabin center
-  double y = 0.5;  // center of door, relative to the cabin center
   double width = 1.0;  // doorway width in meters when fully opened
+
   // Motion axis is defined relative to the cabin orientation.
   // Typically it will be 0 or pi/2.
   double motion_axis_orientation = 0.0;

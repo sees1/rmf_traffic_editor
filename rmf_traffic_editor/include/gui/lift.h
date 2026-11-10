@@ -53,17 +53,7 @@ struct NavigationVertices
 class Lift
 {
 public:
-  // Many lifts have multiple sets of doors which open depending on the
-  // level the lift is visiting. In the most complex case, multiple
-  // sets of doors can open on a level, so unfortunately, the data
-  // structure needs to cater for this, even though it is not common.
-  // If a (level name, door name) combination is not in this data structure,
-  // that means that the door does not open on this level.
-  // It is possible (and expected) that some lifts do not go to all levels,
-  // and that some lifts skip some levels, so this data structure is
-  // expected to be "sparse"
   typedef std::list<std::string> DoorNameList;
-
   typedef std::map<std::string, DoorNameList> LevelDoorMap;
 
 public:
@@ -77,35 +67,43 @@ public:
   void fromYaml(const std::string& _name, const YAML::Node& data,
     const std::vector<Level>& levels);
 
-  void draw(
-    QGraphicsScene* scene,
-    const double meters_per_pixel,
-    const std::string& level_name,
-    const double elevation,
-    const bool apply_transformation = true,
-    const double scale = 1.0,
-    const double translate_x = 0.0,
-    const double translate_y = 0.0,
-    const double rotation = 0.0) const;
+  void draw(QGraphicsScene* scene,
+            const double meters_per_pixel,
+            const int level_idx,
+            const double elevation,
+            const bool apply_transformation = true,
+            Eigen::Affine2d& transform) const;
 
   bool levelDoorOpens(
     const std::string& level_name,
     const std::string& door_name,
     const std::vector<Level>& levels) const;
 
-public:
-  bool nearestItemIndexIfWithinDistance(const Eigen::Vector2d& point,
-    double threshold, double meters_per_pixel,
-    const Eigen::Isometry2d& scene_pose) const;
+  std::vector<Vertex> createNavVertex(int id, double resolution);
+  std::vector<Edge> createNavEdges();
 
-private:
-  Eigen::Vector2d closestOnBoundary(const Eigen::Vector2d& p,
-    double meters_per_pixel) const;
+public:
+  std::vector<int> getNavVerticesIdx()
+  {
+    std::vector<int> result;
+
+    std::transform(doors.begin(), doors.end(), std::back_inserter(result)
+    [](auto&& door)
+    {
+      return door->door_id;
+    });
+
+    result.push_back(cabin_id);
+  }
 
 public:
   std::string name;
   std::string reference_floor_name;
   std::string initial_floor_name;
+
+  int cabin_id;
+
+  int reference_lvl;
 
   // (x, y, yaw) of the cabin center, relative to reference_floor_name origin
   Eigen::Isometry2d pose = Eigen::Isometry2d::Identity();
@@ -116,8 +114,9 @@ public:
   std::string lowest_floor;  // lowest floor the lift can reach
   double highest_elevation = DBL_MAX;
   double lowest_elevation = -DBL_MAX;
+
   std::vector<LiftDoor> doors;
-  LevelDoorMap level_doors;
+
   // When this option is false, it indicates that a lift plugin and its lift
   // door plugins should not be included when building the simulation world.
   // This will help speed up the simulation as well as represent lifts that are

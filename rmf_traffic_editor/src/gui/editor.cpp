@@ -1017,36 +1017,33 @@ void Editor::keyPressEvent(QKeyEvent* e)
       }
       else
       {
-        // Get the selected vertex index
-        int selected_vertex_idx = -1;
-        for (int i = 0;
-          i < static_cast<int>(building.levels[level_idx].vertices.size());
-          i++)
+        // extract vertex
+        auto selected_vertex_it = std::find_if(building.levels[level_idx].vertices.begin(), building.levels[level_idx].vertices.end(),
+        [](auto&& vertex)
         {
-          if (building.levels[level_idx].vertices[i].selected)
-          {
-            selected_vertex_idx = i;
-            break;
-          }
-        }
+          return vertex.selected;
+        });
 
-        if (selected_vertex_idx != -1)
+        if (selected_vertex_it == building.levels[level_idx].vertices.end())
+          break;
+
+        size_t selected_vertex_idx = std::distance(building.levels[level_idx].vertices.begin(), selected_vertex_it); 
+
+        DeleteDialog dialog(this, building, level_idx, selected_vertex_idx);
+
+        if (dialog.exec() == QDialog::Accepted)
         {
-          DeleteDialog dialog(this, building, level_idx, selected_vertex_idx);
-          if (dialog.exec() == QDialog::Accepted)
-          {
-            undo_stack.push(new DeleteCommand(&building, level_idx, true));
-            clearCurrentToolBuffer();
-            updatePropertyEditor();
-            createScene();
-          }
-          else
-          {
-            building.clearSelection(level_idx);
-            clearCurrentToolBuffer();
-            updatePropertyEditor();
-            createScene();
-          }
+          undo_stack.push(new DeleteCommand(&building, level_idx, true));
+          clearCurrentToolBuffer();
+          updatePropertyEditor();
+          createScene();
+        }
+        else
+        {
+          building.clearSelection(level_idx);
+          clearCurrentToolBuffer();
+          updatePropertyEditor();
+          createScene();
         }
       }
       break;
@@ -1869,9 +1866,9 @@ void Editor::propertyEditorCellChanged(int row, int column)
       const auto id = Vertex::getStringParam(e.params, "editor_door_id");
       if (id)
       {
-        const auto lane = level.getEditorGeneratedEdgeByKey("door/" + *id);
+        auto lane = level.getEditorGeneratedEdgeByKey("door/" + *id);
         if (lane)
-          (*lane)->params["door_name"] = Param(value);
+          lane->params["door_name"] = Param(value);
       }
     }
     createScene();
@@ -2188,8 +2185,20 @@ void Editor::mouseMove(
 
       if (level.drawing_meters_per_pixel <= 0.0)
         return;
+
+      std::vector<std::shared_ptr<Lift>> dup_lifts;
+      std::for_each(building.levels.begin(), building.levels.end(),
+      [&dup_lifts](auto&& level)
+      {
+        auto level_lifts = level.getLifts();
+        dup_lifts.insert(dup_lifts.end(), level_lifts.begin(), level_lifts.end());
+      });
+
+      std::sort(dup_lifts.begin(), dup_lifts.end());
+      auto border_it = std::unique(dup_lifts.begin(), dup_lifts.end());
+      dup_lifts.erase(border_it, dup_lifts.end());
       
-      for (const auto& lift : building.lifts)
+      for (const auto& lift : dup_lifts)
       {
         if (level.elevation < lift.lowest_elevation ||
             level.elevation > lift.highest_elevation)
@@ -2210,11 +2219,37 @@ void Editor::mouseMove(
           continue;
         
         const Eigen::Vector2d point(p.x(), p.y());
+
+        if (level.drawing_meters_per_pixel <= 0.0)
+          return false;
+
+        Eigen::Vector2d local = utils::geometry::scenePose(lift, t.scale, t.dx, t.dy, t.rotation).inverse() * point;
+
+        const Eigen::Vector2d half_size(lift.width / (2.0 * meters_per_pixel), lift.depth / (2.0 * meters_per_pixel));
+        const Eigen::Vector2d min = -half_size;
+        const Eigen::Vector2d max = half_size;
+
+        Eigen::Vector2d side_coord = local.cwiseMax(min).cwiseMin(max);
         
-        if (!lift.nearestItemIndexIfWithinDistance(
-            point, 0.1 / level.drawing_meters_per_pixel,
-            level.drawing_meters_per_pixel,
-            utils::geometry::scenePose(lift, t.scale, t.dx, t.dy, t.rotation)))
+        if ((local.array() >= min.array()).all() && (local.array() <= max.array()).all())
+        {
+          const double distances[] = {local.x() - min.x(),
+                                      max.x() - local.x(),
+                                      local.y() - min.y(),
+                                      max.y() - local.y()};
+
+          const int side = std::min_element(distances, distances + 4) - distances;
+
+          switch (side)
+          {
+            case 0: side_coord.x() = min.x(); break;
+            case 1: side_coord.x() = max.x(); break;
+            case 2: side_coord.y() = min.y(); break;
+            case 3: side_coord.y() = max.y(); break;
+          }
+        }
+        
+        if (!(local - side_coord <= threshold))
           continue;
 
         Eigen::Affine2d reference_to_scene = Eigen::Affine2d::Identity();

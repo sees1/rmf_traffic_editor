@@ -44,9 +44,11 @@ public:
 
 public:
   Edge();
-
-  Edge(const int _start_idx, const int _end_idx, const Type _type);
-
+  Edge(const int start_id, const int end_id, const Type t);
+  Edge(const Edge& other);
+  Edge(Edge&& other);
+  Edge& operator=(const Edge& other);
+  Edge& operator=(Edge&& other);
   ~Edge();
 
   void fromYaml(const YAML::Node& data, const Type edge_type);
@@ -88,7 +90,7 @@ public:
     return !(start_idx < 0) || !(end_idx < 0) || (start_idx < graph_size) || (end_idx < graph_size);
   }
 
-public:
+protected:
   int start_idx, end_idx;
   Type type;
   bool selected;  // only for visualization, not saved to YAML

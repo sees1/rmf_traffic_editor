@@ -20,7 +20,23 @@
 #include "lift_door.h"
 #include "level.h"
 
-std::string LiftDoor::updateNavGraph(Level& level,
+Vertex createNavVertex(int id, const Eigen::Isometry2d& lift_pose, double resolution)
+{
+  door_id = id;
+
+  Eigen::Vector2d normal(std::sin(motion_axis_orientation), std::cos(motion_axis_orientation));
+  
+  if (normal.dot(local_center) < 0)
+    normal = -normal;
+
+  Eigen::Vector2d position = lift_pose * ((pose + door_offset * normal) / resolution);
+
+  return Vertex(position.x(), position.y(), name);
+}
+
+Edge createNavEdge()
+
+std::string LiftDoor::updateNavVertex(Level& level,
   const Eigen::Isometry2d& lift_scene_pose,
   const std::string& lift_key,
   const std::string& lift_name,

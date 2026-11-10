@@ -28,13 +28,41 @@ Edge::Edge()
 {
 }
 
-Edge::Edge(const int _start_idx, const int _end_idx, const Type _type)
+Edge::Edge(const int start_id, const int end_id, const Type t)
 : start_idx(_start_idx),
   end_idx(_end_idx),
   type(_type),
   selected(false)
 {
   createRequiredParameters();
+}
+
+Edge(const Edge& other)
+: start_idx(other.start_idx),
+  end_idx(other.end_idx),
+  type(other.type),
+  selected(false)
+{ }
+
+Edge(Edge&& other)
+: Edge(other)
+{ }
+
+Edge& Edge::operator=(const Edge& other)
+{
+  if (*this == other)
+    return *this;
+
+  start_idx = other.start_idx;
+  end_idx = other.end_idx;
+  type = other.type;
+  selected = other.selected;
+  return *this;
+}
+
+Edge& Edge::operator=(Edge&& other)
+{
+  return operator=(other);
 }
 
 Edge::~Edge()

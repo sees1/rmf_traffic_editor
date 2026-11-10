@@ -1,39 +1,47 @@
 #include "door.h"
 #include <stdexcept>
 
-Door::Door() : Edge(-1, -1, Edge::DOOR) {}
-Door::Door(const Edge& edge) : Edge(edge)
+Door::Door()
+: Edge(-1, -1, Edge::DOOR)
+{ }
+
+Door::Door(const Edge& edge)
+: Edge(edge)
 {
   if (type != Edge::DOOR)
     throw std::invalid_argument("Door requires a door edge");
 }
+
 void Door::fromYaml(const YAML::Node& data)
 {
   params.clear();
   Edge::fromYaml(data, Edge::DOOR);
 }
+
 namespace {
-std::optional<Eigen::Vector2d> positionOf(
-  const std::map<std::string, Param>& params, const std::string& side)
-{
-  const auto x = params.find(side + "_vertex_x");
-  const auto y = params.find(side + "_vertex_y");
-  if (x == params.end() || y == params.end() ||
-    x->second.type != Param::DOUBLE || y->second.type != Param::DOUBLE)
-    return std::nullopt;
-  return Eigen::Vector2d(x->second.value_double, y->second.value_double);
+  std::optional<Eigen::Vector2d> positionOf(
+    const std::map<std::string, Param>& params, const std::string& side)
+  {
+    const auto x = params.find(side + "_vertex_x");
+    const auto y = params.find(side + "_vertex_y");
+    if (x == params.end() || y == params.end() ||
+      x->second.type != Param::DOUBLE || y->second.type != Param::DOUBLE)
+      return std::nullopt;
+    return Eigen::Vector2d(x->second.value_double, y->second.value_double);
+  }
 }
-}
+
 std::optional<Eigen::Vector2d> Door::frontPosition() const
 {
   return frontVertex() >= 0 ? positionOf(params, "front") : std::nullopt;
 }
+
 std::optional<Eigen::Vector2d> Door::backPosition() const
 {
   return backVertex() >= 0 ? positionOf(params, "back") : std::nullopt;
 }
-void Door::setApproachPositions(const Eigen::Vector2d& front,
-  const Eigen::Vector2d& back)
+
+void Door::setApproachPositions(const Eigen::Vector2d& front, const Eigen::Vector2d& back)
 {
   if (frontVertex() < 0 || backVertex() < 0)
     return;
@@ -42,6 +50,7 @@ void Door::setApproachPositions(const Eigen::Vector2d& front,
   params["back_vertex_x"] = Param(back.x());
   params["back_vertex_y"] = Param(back.y());
 }
+
 YAML::Node Door::toYaml() const 
 {
   return Edge::toYaml();

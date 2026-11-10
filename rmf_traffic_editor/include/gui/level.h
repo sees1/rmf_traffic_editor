@@ -73,7 +73,11 @@ public:
   };
 
 public:
-  Level() = default;
+  Level(int lvl_idx)
+  : idx(lvl_idx)
+  {
+    
+  }
 
   ~Level() = default;
 
@@ -83,23 +87,34 @@ public:
 
   void addVertex(const double x, const double y);
   void addVertex(const Vertex& new_vertex);
+  void addLift(std::shared_ptr<Lift> lift);
+  void addConstraint(const QUuid& a, const QUuid& b);
+  QUuid addFeature(const int layer, const double x, const double y);
+
+  bool canDeleteCurrentSelection();
+  void removeConstraint(const QUuid& a, const QUuid& b);
+  void removeFeature(const int layer_idx, QUuid feature_uuid);
+  bool deleteSelected();
+  bool deleteUsedEntities(int selected_vertex_idx);
+  bool deleteLiftVertex(std::string lift_name);
+
   std::size_t getVertexById(QUuid vertex_id);
   std::optional<std::size_t> getEditorGeneratedVertexByKey(const std::string& key);
+  std::shared_ptr<Edge> getEditorGeneratedEdgeByKey(const std::string& key);
+  bool getFeaturePoint(const QUuid& id, QPointF& point) const;
+  void getSelectedItems(std::vector<SelectedItem>& selected_items);
+  bool getDrawingVisible() const { return _drawing_visible; }
+
+  void setSelectedLineItem(QGraphicsLineItem* line_item, const RenderingOptions& rendering_options);
+  void setSelectedContainingPolygon(const double x, const double y);
+  void setDrawingVisible(bool value) { _drawing_visible = value; }
 
   bool fromYaml(const std::string& name, const YAML::Node& data, const CoordinateSystem& coordinate_system);
-
   YAML::Node toYaml(const CoordinateSystem& coordinate_system) const;
   std::vector<nlohmann::json> toJson(const CoordinateSystem& coordinate_system) const;
 
   const Feature* findFeature(const QUuid& id) const;
-
   const Feature* findFeature(const double x, const double y) const;
-
-  bool getFeaturePoint(const QUuid& id, QPointF& point) const;
-
-  void addConstraint(const QUuid& a, const QUuid& b);
-
-  void removeConstraint(const QUuid& a, const QUuid& b);
 
   NearestItem nearestItems(const double x, const double y);
 
@@ -114,29 +129,13 @@ public:
                         const RenderingOptions& rendering_options,
                         const Qt::KeyboardModifiers& modifiers);
 
-  bool canDeleteCurrentSelection();
-
-  bool deleteSelected();
-
-  bool deleteUsedEntities(int selected_vertex_idx);
-
-  bool deleteLiftVertex(std::string lift_name);
-
   std::vector<Edge> edgesWithVertex(int vertex_idx) const;
-
-  std::optional<Edge*> getEditorGeneratedEdgeByKey(const std::string& key);
 
   std::vector<Polygon> polygonsWithVertex(int vertex_idx) const;
 
   void calculateScale(const CoordinateSystem& coordinate_system);
 
   void clearSelection();
-
-  void getSelectedItems(std::vector<SelectedItem>& selected_items);
-
-  void setSelectedLineItem(QGraphicsLineItem* line_item, const RenderingOptions& rendering_options);
-
-  void setSelectedContainingPolygon(const double x, const double y);
 
   void draw(QGraphicsScene* scene,
             std::vector<EditorModel>& editor_models,
@@ -147,14 +146,6 @@ public:
   void clearScene();
 
   bool loadDrawing(QString* error_message = nullptr);
-
-  void setDrawingVisible(bool value) { _drawing_visible = value; }
-
-  bool getDrawingVisible() const { return _drawing_visible; }
-
-  QUuid addFeature(const int layer, const double x, const double y);
-
-  void removeFeature(const int layer_idx, QUuid feature_uuid);
 
   bool exportFeatures(const std::string& filename) const;
 
@@ -224,15 +215,18 @@ private:
 public:
   std::string name;
 
+  int idx;
+
   // primitives
   std::vector<Vertex> vertices;
-  std::vector<Edge> edges;
+  std::vector<std::shared_ptr<Edge>> edges;
   std::vector<Polygon> polygons;
   std::vector<Layer> layers;
   std::vector<Model> models;
   std::vector<Fiducial> fiducials;
   std::vector<Feature> floorplan_features;
   std::vector<Constraint> constraints;
+  std::vector<std::shared_ptr<Lift>> lifts;
 
   // temporary, just for debugging polygon edge projection...
   double polygon_edge_proj_x = 0.0;

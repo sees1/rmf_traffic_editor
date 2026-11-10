@@ -393,17 +393,17 @@ void LiftDialog::okButtonClicked()
 
 void LiftDialog::updateLiftWps()
 {
-  int reference_lvl = -1;
   auto reference_it = std::find_if(building_.levels.begin(), building_.levels.end(),
   [this](auto&& level)
   {
     return level.name == lift_.reference_floor_name;
   });
-  if (reference_it != building_.levels.end())
-    reference_lvl = std::distance(building_.levels.begin(), reference_it);
 
-  building_.updateLiftGraph(&lift_, reference_lvl);
-  emit redraw();
+  if (reference_it != building_.levels.end())
+  {
+    building_.updateLifts(&lift_, std::distance(building_.levels.begin(), reference_it));
+    emit redraw();
+  }
 }
 
 void LiftDialog::updateDoorTable()
@@ -535,16 +535,14 @@ void LiftDialog::doorTableCellChanged(int row, int col)
 
 void LiftDialog::updateLiftView()
 {
-  int reference_lvl = -1;
   auto reference_it = std::find_if(building_.levels.begin(), building_.levels.end(),
   [this](auto&& level)
   {
     return level.name == lift_.reference_floor_name;
   });
-  if (reference_it != building_.levels.end())
-    reference_lvl = std::distance(building_.levels.begin(), reference_it);
 
-  building_.updateLiftGraph(&lift_, reference_lvl);
+  if (reference_it != building_.levels.end())
+    building_.updateLifts(&lift_, std::distance(building_.levels.begin(), reference_it));
 
   lift_scene_->clear();
   lift_.draw(lift_scene_, 0.01, std::string(), lift_.lowest_elevation, false);
